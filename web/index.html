@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>thingino firmware builder</title>
+<style>
+  :root {
+    --bg: #0c0f12;
+    --panel: #151a1f;
+    --panel-2: #1b2127;
+    --border: #2a323b;
+    --text: #e6edf3;
+    --muted: #8b98a5;
+    --accent: #46d160;
+    --accent-dim: #2f8f44;
+    --danger: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh;
+    font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    background: radial-gradient(1200px 600px at 50% -10%, #15202a 0%, var(--bg) 60%);
+    color: var(--text);
+    display: flex; align-items: flex-start; justify-content: center;
+    padding: 7vh 16px 4vh;
+  }
+  .card {
+    width: 100%; max-width: 540px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+    padding: 28px 26px; box-shadow: 0 18px 50px rgba(0,0,0,.45);
+  }
+  h1 { margin: 0 0 4px; font-size: 22px; letter-spacing: .2px; }
+  h1 .dot { color: var(--accent); }
+  p.sub { margin: 0 0 22px; color: var(--muted); font-size: 14px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 0 0 7px; }
+  .row { display: flex; gap: 10px; }
+  input[type=text] {
+    flex: 1; min-width: 0;
+    background: var(--panel-2); border: 1px solid var(--border); border-radius: 9px;
+    color: var(--text); padding: 12px 13px; font-size: 14px; outline: none;
+  }
+  input[type=text]:focus { border-color: var(--accent-dim); }
+  button {
+    background: var(--accent); color: #07120a; border: 0; border-radius: 9px;
+    padding: 0 18px; font-size: 14px; font-weight: 650; cursor: pointer;
+    white-space: nowrap; transition: filter .15s, opacity .15s;
+  }
+  button:hover:not(:disabled) { filter: brightness(1.08); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .hint { margin: 9px 2px 0; font-size: 12px; color: var(--muted); min-height: 16px; }
+  .hint.bad { color: var(--danger); }
+  .panel {
+    margin-top: 20px; padding: 16px; border-radius: 10px;
+    background: var(--panel-2); border: 1px solid var(--border);
+    display: none;
+  }
+  .panel.show { display: block; }
+  .panel .head { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+  .spinner {
+    width: 15px; height: 15px; border-radius: 50%;
+    border: 2px solid var(--border); border-top-color: var(--accent);
+    animation: spin .8s linear infinite; flex: none;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .meta { margin-top: 9px; font-size: 12.5px; color: var(--muted); word-break: break-all; }
+  .meta code { color: var(--text); background: #0e1318; padding: 1px 6px; border-radius: 5px; }
+  a.dl {
+    display: inline-block; margin-top: 12px; text-decoration: none;
+    background: var(--accent); color: #07120a; font-weight: 650;
+    padding: 11px 16px; border-radius: 9px;
+  }
+  .ok { color: var(--accent); }
+  .err { color: var(--danger); }
+  footer { margin-top: 18px; font-size: 11.5px; color: var(--muted); line-height: 1.6; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>thingino firmware builder<span class="dot">.</span></h1>
+    <p class="sub">Pick your camera profile — it builds on GitHub Actions and you get a flashable image.</p>
+
+    <label for="board">Camera defconfig</label>
+    <div class="row">
+      <input id="board" type="text" list="boards" autocomplete="off" spellcheck="false"
+             placeholder="start typing, e.g. atom_cam2…">
+      <datalist id="boards"></datalist>
+      <button id="go" disabled>Build</button>
+    </div>
+    <div class="hint" id="hint">Loading camera list…</div>
+
+    <div class="panel" id="panel">
+      <div class="head"><span id="icon"></span><span id="title"></span></div>
+      <div class="meta" id="meta"></div>
+      <div id="action"></div>
+    </div>
+
+    <footer>
+      Builds run on free GitHub Actions and can take ~20–40 minutes. Each request
+      is rate-limited. The image is published for anonymous download when ready.
+    </footer>
+  </div>
+
+<script>
+const boardInput = document.getElementById('board');
+const datalist   = document.getElementById('boards');
+const goBtn      = document.getElementById('go');
+const hint       = document.getElementById('hint');
+const panel      = document.getElementById('panel');
+const icon       = document.getElementById('icon');
+const titleEl    = document.getElementById('title');
+const metaEl     = document.getElementById('meta');
+const actionEl   = document.getElementById('action');
+
+let allowed = new Set();
+let polling = null;
+
+function setHint(msg, bad=false) { hint.textContent = msg; hint.classList.toggle('bad', bad); }
+
+function validate() {
+  const v = boardInput.value.trim();
+  goBtn.disabled = !allowed.has(v);
+  if (v && !allowed.has(v)) setHint('Not a known defconfig.', true);
+  else setHint(allowed.size ? `${allowed.size} camera profiles available.` : '');
+}
+
+async function loadBoards() {
+  try {
+    const r = await fetch('/api/defconfigs');
+    if (!r.ok) throw new Error(r.status);
+    const list = await r.json();
+    list.sort();
+    allowed = new Set(list);
+    datalist.innerHTML = list.map(b => `<option value="${b}">`).join('');
+    setHint(`${list.length} camera profiles available.`);
+  } catch (e) {
+    setHint('Could not load camera list — is the broker running?', true);
+  }
+}
+
+function showPanel(spin, title, html, metaHtml) {
+  panel.classList.add('show');
+  icon.outerHTML = spin
+    ? '<span class="spinner" id="icon"></span>'
+    : '<span id="icon"></span>';
+  document.getElementById('title').textContent = title;
+  metaEl.innerHTML = metaHtml || '';
+  actionEl.innerHTML = html || '';
+}
+
+function fmt(s) { const m = Math.floor(s/60), x = s%60; return `${m}:${String(x).padStart(2,'0')}`; }
+
+async function submit() {
+  const defconfig = boardInput.value.trim();
+  if (!allowed.has(defconfig)) return;
+  goBtn.disabled = true; boardInput.disabled = true;
+  if (polling) clearInterval(polling);
+
+  let res;
+  try {
+    res = await fetch('/api/build', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ defconfig }),
+    });
+  } catch {
+    return fail('Could not reach the broker.');
+  }
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 429) return fail(data.error || 'Rate limited — try again later.');
+  if (!res.ok)            return fail(data.error || `Request failed (${res.status}).`);
+
+  const started = Date.now();
+  const tick = () => {
+    const el = Math.floor((Date.now() - started) / 1000);
+    showPanel(true, 'Building…',
+      `<span style="color:var(--muted);font-size:12.5px">Elapsed ${fmt(el)} — you can leave this open.</span>`,
+      `defconfig <code>${defconfig}</code><br>build id <code>${data.build_id}</code>`);
+  };
+  tick();
+
+  polling = setInterval(async () => {
+    tick();
+    try {
+      const s = await fetch(data.status_url);
+      const sj = await s.json();
+      if (sj.ready) {
+        clearInterval(polling); polling = null;
+        showPanel(false, '✅ Build ready',
+          `<a class="dl" href="${sj.download_url}" download>Download firmware (.bin)</a>`,
+          `defconfig <code>${defconfig}</code><br>build id <code>${data.build_id}</code>`);
+        titleEl.classList.add('ok');
+        boardInput.disabled = false;
+      }
+    } catch { /* keep polling */ }
+  }, 8000);
+}
+
+function fail(msg) {
+  if (polling) { clearInterval(polling); polling = null; }
+  showPanel(false, '⚠ ' + msg, '', '');
+  titleEl.classList.add('err');
+  goBtn.disabled = false; boardInput.disabled = false;
+  validate();
+}
+
+boardInput.addEventListener('input', validate);
+boardInput.addEventListener('keydown', e => { if (e.key === 'Enter' && !goBtn.disabled) submit(); });
+goBtn.addEventListener('click', submit);
+loadBoards();
+</script>
+</body>
+</html>
