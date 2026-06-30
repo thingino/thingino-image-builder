@@ -93,8 +93,9 @@ and uncomment the `CNAME` line in `pages.yml`.
   users. Click *"Use master token instead"* on the sign-in screen.
 
 **Operational actions** (any admin): enable/disable builds, edit **limits** (live,
-no redeploy) with usage shown, **clear logs**, **reset limits**, cancel any build,
-remove a finished build's artifact + run early, live stats / recent builds + events.
+no redeploy) with usage shown, **clear logs**, **clear finished builds**, **reset
+limits**, cancel any build, remove a finished build's artifact + run early, live
+stats / recent builds + events.
 
 **User management** (master only): invite a username → you get a one-time link
 (60 min). The new admin opens it, scans the **QR** into their authenticator, sets

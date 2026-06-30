@@ -670,6 +670,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/admin/stats", get(admin_stats))
         .route("/api/admin/toggle", post(admin_toggle))
         .route("/api/admin/clear-logs", post(admin_clear_logs))
+        .route("/api/admin/clear-builds", post(admin_clear_builds))
         .route("/api/admin/reset-limits", post(admin_reset_limits))
         .route("/api/admin/limits", post(admin_limits))
         .route("/api/admin/update", post(admin_update))
@@ -1251,6 +1252,20 @@ async fn admin_clear_logs(State(st): State<AppState>, headers: HeaderMap) -> Res
     let conn = st.db.lock();
     let cleared = conn.execute("DELETE FROM events", []).unwrap_or(0);
     log_event(&conn, "admin_clear_logs", None, None, None, &format!("cleared {cleared} events"), None);
+    drop(conn);
+    Json(json!({ "ok": true, "cleared": cleared })).into_response()
+}
+
+/// Admin: delete finished builds (done/failed/cancelled/expired) from the list; never queued/running.
+async fn admin_clear_builds(State(st): State<AppState>, headers: HeaderMap) -> Response {
+    if !session_ok(&headers, &st) {
+        return json_err(StatusCode::UNAUTHORIZED, "admin auth required");
+    }
+    let conn = st.db.lock();
+    let cleared = conn
+        .execute("DELETE FROM builds WHERE state IN ('done','failed','cancelled','expired')", [])
+        .unwrap_or(0);
+    log_event(&conn, "admin_clear_builds", None, None, None, &format!("cleared {cleared} finished builds"), None);
     drop(conn);
     Json(json!({ "ok": true, "cleared": cleared })).into_response()
 }

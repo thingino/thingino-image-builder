@@ -74,6 +74,7 @@
     <div>Builds are <span id="kill-state" class="fw-bold">…</span></div>
     <button id="kill-btn" class="btn btn-sm">…</button>
     <button id="clearlogs-btn" class="btn btn-sm btn-outline-secondary">Clear logs</button>
+    <button id="clearbuilds-btn" class="btn btn-sm btn-outline-secondary">Clear finished builds</button>
     <button id="resetlimits-btn" class="btn btn-sm btn-outline-secondary">Reset limits</button>
     <span class="small muted ms-auto" id="kill-extra"></span>
   </div></div>
@@ -206,6 +207,7 @@ async function refresh(){
 }
 async function toggle(){ await fetch(API+'/api/admin/toggle',{method:'POST',headers:{Authorization:'Bearer '+tok(),'content-type':'application/json'},body:JSON.stringify({enabled:!enabled})}); refresh(); }
 async function clearLogs(){ if(!confirm('Delete all audit events?')) return; await fetch(API+'/api/admin/clear-logs',{method:'POST',headers:{Authorization:'Bearer '+tok()}}); refresh(); }
+async function clearBuilds(){ if(!confirm('Delete all finished builds (done/failed/cancelled/expired) from the list? Active builds (queued/running) are kept.')) return; await fetch(API+'/api/admin/clear-builds',{method:'POST',headers:{Authorization:'Bearer '+tok()}}); refresh(); }
 async function resetLimits(){ if(!confirm('Reset all hourly rate-limit counts?')) return; const r=await fetch(API+'/api/admin/reset-limits',{method:'POST',headers:{Authorization:'Bearer '+tok()}}); if(r.ok) $('kill-extra').textContent='hourly limits reset'; refresh(); }
 let lastLimits=null, lastUsage=null, editingLimits=false;
 const fmtLimits=(L,U)=>{ const pair=(u,m)=> U ? `<code>${u}</code> / <code>${m}</code>` : `<code>${m}</code>`;
@@ -279,6 +281,7 @@ $('totp').addEventListener('keydown',e=>{ if(e.key==='Enter') login(); });
 $('logout').onclick=logout;
 $('kill-btn').onclick=toggle;
 $('clearlogs-btn').onclick=clearLogs;
+$('clearbuilds-btn').onclick=clearBuilds;
 $('resetlimits-btn').onclick=resetLimits;
 $('limits-edit').onclick=editLimits;
 $('limits-save').onclick=saveLimits;

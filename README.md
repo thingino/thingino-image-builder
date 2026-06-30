@@ -35,11 +35,12 @@ browser ──POST /api/build──▶ Rust broker ──repository_dispatch─�
   "cancelling" state until the run stops), 30-minute download window.
 - **Admin panel** (`/admin.html`) — live stats, recent builds/events with
   requester uid + full **IP** (click → /64 bucket), a global **kill switch**,
-  **live limit editing** (with usage), per-build **cancel / remove**, clear logs,
-  and an audit log of *who* did what — behind **2FA**. On the **Worker** path it
-  adds **named admin accounts** (invite-link self-enrollment, PBKDF2 passwords,
-  per-user TOTP) with a **master break-glass** token; the **VPS** broker has the
-  core subset plus one-click container **self-update**.
+  **live limit editing** (with usage), per-build **cancel / remove**, **clear logs
+  / finished builds**, **named admin accounts** (invite-link self-enrollment,
+  PBKDF2 passwords, per-user TOTP) with a **master break-glass** token, and an
+  audit log of *who* did what — all behind **2FA**. Both deploy paths carry the
+  full set; the **VPS** broker additionally offers one-click container
+  **self-update** (the Worker deploys via `git push`).
 - **GitHub auth** via static token **or a GitHub App** (both paths) — the broker
   mints its own short-lived installation tokens, so builds are attributed to the
   app/bot and nothing long-lived sits on the box.
@@ -61,9 +62,9 @@ browser ──POST /api/build──▶ Rust broker ──repository_dispatch─�
 
 ## Deploy
 
-Two ways to run it — same build pipeline either way. The admin UI is shared, but its
-newer controls (named accounts, live limit editing, per-build cancel/remove) are
-**Worker-backed**, so the Worker is the more fully-featured path:
+Two ways to run it — **same build pipeline, same UI, and the same full admin feature
+set** on both (named accounts, live limit editing, per-build cancel/remove, …). Pick
+by where you want the control plane to live:
 
 **A. No server ($0):** Cloudflare Worker (API + D1 + cron) + GitHub Pages (UI),
 both free tier. Guide → **[worker/README.md](worker/README.md)**.

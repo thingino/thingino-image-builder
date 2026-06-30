@@ -710,6 +710,14 @@ async function handleAdminClearLogs(request, env) {
   await logEvent(env, "admin_clear_logs", null, null, null, `cleared ${n} events`);
   return json({ ok: true, cleared: n }, 200, env);
 }
+// Delete finished builds (done/failed/cancelled/expired) from the list; never queued/running.
+async function handleAdminClearBuilds(request, env) {
+  if (!(await sessionAdmin(request, env))) return json({ error: "admin auth required" }, 401, env);
+  const r = await env.DB.prepare("DELETE FROM builds WHERE state IN ('done','failed','cancelled','expired')").run();
+  const n = r.meta?.changes ?? 0;
+  await logEvent(env, "admin_clear_builds", null, null, null, `cleared ${n} finished builds`);
+  return json({ ok: true, cleared: n }, 200, env);
+}
 async function handleAdminResetLimits(request, env) {
   if (!(await sessionAdmin(request, env))) return json({ error: "admin auth required" }, 401, env);
   // Mark "now" so the rate-limit queries ignore every build created before this.
@@ -752,6 +760,7 @@ export default {
       if (p === "/api/admin/stats" && request.method === "GET") return await handleAdminStats(request, env);
       if (p === "/api/admin/toggle" && request.method === "POST") return await handleAdminToggle(request, env);
       if (p === "/api/admin/clear-logs" && request.method === "POST") return await handleAdminClearLogs(request, env);
+      if (p === "/api/admin/clear-builds" && request.method === "POST") return await handleAdminClearBuilds(request, env);
       if (p === "/api/admin/reset-limits" && request.method === "POST") return await handleAdminResetLimits(request, env);
       if (p === "/api/admin/limits" && request.method === "POST") return await handleAdminLimits(request, env);
       if (p === "/api/admin/users" && request.method === "POST") return await handleAdminInvite(request, env);
