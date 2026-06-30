@@ -27,10 +27,12 @@ jobs:
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-      - name: Point the UI at the Worker + set the custom domain
+      - name: Point the UI at the Worker
         run: |
           echo "window.API_BASE='https://thingino-web-builder.gtxent.workers.dev';" > web/config.js
-          echo "web-builder.thingino.com" > web/CNAME
+          # Custom domain disabled for now (no DNS yet) — serves at thingino.github.io/<repo>/.
+          # To enable web-builder.thingino.com later: add the CNAME DNS record, then
+          #   echo "web-builder.thingino.com" > web/CNAME
       - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
       - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         with:
