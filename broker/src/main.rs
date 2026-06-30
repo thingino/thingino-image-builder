@@ -98,6 +98,8 @@ struct AppState {
     cfg: Arc<Config>,
     thingino: Arc<Mutex<Thingino>>,
     sessions: Arc<Mutex<std::collections::HashMap<String, (String, i64)>>>,
+    // Per-IP request throttle (audit F12): ip -> (window_start, count), in-memory.
+    request_limiter: Arc<Mutex<std::collections::HashMap<String, (i64, u32)>>>,
     installation_token: Arc<Mutex<(Option<String>, i64)>>,
     latest_release: Arc<Mutex<(Option<String>, i64)>>,
 }
@@ -234,6 +236,26 @@ fn builds_enabled(conn: &Connection) -> bool {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// In-memory per-IP request throttle (audit F12, parity with the Worker's Durable
+/// Object limiter): a fixed window of 20 requests / 60s per IP, checked before any DB
+/// work so a `/api/build` flood can't hammer the broker. The broker is a singleton
+/// process, so one in-memory counter is authoritative. Returns true if allowed.
+fn request_rate_ok(st: &AppState, ip: &str) -> bool {
+    const LIMIT: u32 = 20;
+    const WINDOW: i64 = 60;
+    let now_ts = now();
+    let mut m = st.request_limiter.lock();
+    if m.len() > 4096 {
+        m.retain(|_, v| now_ts - v.0 < WINDOW);
+    }
+    let e = m.entry(ip.to_string()).or_insert((now_ts, 0));
+    if now_ts - e.0 >= WINDOW {
+        *e = (now_ts, 0);
+    }
+    e.1 += 1;
+    e.1 <= LIMIT
+}
+
 fn log_event(
     conn: &Connection,
     kind: &str,
@@ -664,6 +686,7 @@ async fn main() -> anyhow::Result<()> {
             fetched_at: 0,
         })),
         sessions: Arc::new(Mutex::new(std::collections::HashMap::new())),
+        request_limiter: Arc::new(Mutex::new(std::collections::HashMap::new())),
         installation_token: Arc::new(Mutex::new((None, 0))),
         latest_release: Arc::new(Mutex::new((None, 0))),
     };
@@ -790,6 +813,11 @@ async fn post_build(
     let client = client_ip(&headers, peer, &st.cfg.ip_header);
     let ip_full = client.to_string();
     let ip = ip_bucket(client);
+    // F12: cheap per-IP request throttle in front of the DB work (parity with the
+    // Worker's Durable Object limiter) — a flood can't hammer the broker.
+    if !request_rate_ok(&st, &ip) {
+        return json_uid(StatusCode::TOO_MANY_REQUESTS, &uid, json!({"error": "too many requests from your network — slow down"}));
+    }
     let now_ts = now();
     let build_id = Uuid::new_v4().to_string();
     let commit = thingino.commit.clone();
