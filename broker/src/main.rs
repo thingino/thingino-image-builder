@@ -42,7 +42,11 @@ use uuid::Uuid;
 const WINDOW_SECS: i64 = 3600;
 
 struct Config {
-    github_token: String,
+    github_token: Option<String>,
+    github_app_id: Option<String>,
+    github_app_installation_id: Option<String>,
+    github_app_key: Option<Vec<u8>>,
+    app_mode: bool,
     github_repo: String,
     thingino_repo: String,
     thingino_ref: String,
@@ -79,6 +83,7 @@ struct AppState {
     cfg: Arc<Config>,
     thingino: Arc<Mutex<Thingino>>,
     sessions: Arc<Mutex<std::collections::HashMap<String, i64>>>,
+    installation_token: Arc<Mutex<(Option<String>, i64)>>,
 }
 
 fn env_or(key: &str, default: &str) -> String {
@@ -307,8 +312,26 @@ async fn main() -> anyhow::Result<()> {
     let _ = std::fs::write(env_or("PID_PATH", "broker.pid"), std::process::id().to_string());
     tracing::info!("singleton lock {lock_path} acquired, pid {}", std::process::id());
 
+    // GitHub auth: a static token, OR a GitHub App (App ID + installation + private key).
+    let github_token = std::env::var("GITHUB_TOKEN").ok().filter(|s| !s.is_empty());
+    let github_app_id = std::env::var("GITHUB_APP_ID").ok().filter(|s| !s.is_empty());
+    let github_app_installation_id = std::env::var("GITHUB_APP_INSTALLATION_ID").ok().filter(|s| !s.is_empty());
+    let github_app_key = match std::env::var("GITHUB_APP_KEY_PATH").ok().filter(|s| !s.is_empty()) {
+        Some(p) => Some(std::fs::read(&p).map_err(|e| anyhow::anyhow!("reading GITHUB_APP_KEY_PATH {p}: {e}"))?),
+        None => None,
+    };
+    let app_mode = github_app_id.is_some() && github_app_installation_id.is_some() && github_app_key.is_some();
+    if !app_mode && github_token.is_none() {
+        anyhow::bail!("set GITHUB_TOKEN, or GITHUB_APP_ID + GITHUB_APP_INSTALLATION_ID + GITHUB_APP_KEY_PATH");
+    }
+    tracing::info!("github auth: {}", if app_mode { "GitHub App" } else { "static token" });
+
     let cfg = Config {
-        github_token: std::env::var("GITHUB_TOKEN").map_err(|_| anyhow::anyhow!("GITHUB_TOKEN required"))?,
+        github_token,
+        github_app_id,
+        github_app_installation_id,
+        github_app_key,
+        app_mode,
         github_repo: std::env::var("GITHUB_REPO").map_err(|_| anyhow::anyhow!("GITHUB_REPO required (owner/repo)"))?,
         thingino_repo: env_or("THINGINO_REPO", "themactep/thingino-firmware"),
         thingino_ref: env_or("THINGINO_REF", "master"),
@@ -386,6 +409,7 @@ async fn main() -> anyhow::Result<()> {
             fetched_at: 0,
         })),
         sessions: Arc::new(Mutex::new(std::collections::HashMap::new())),
+        installation_token: Arc::new(Mutex::new((None, 0))),
     };
 
     {
@@ -1096,7 +1120,7 @@ async fn fetch_runs(st: &AppState) -> anyhow::Result<Vec<RunRow>> {
     let v: serde_json::Value = st
         .http
         .get(&url)
-        .bearer_auth(&st.cfg.github_token)
+        .bearer_auth(github_token(st).await)
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
         .send()
@@ -1117,6 +1141,65 @@ async fn fetch_runs(st: &AppState) -> anyhow::Result<Vec<RunRow>> {
     Ok(out)
 }
 
+/// Current GitHub token: a minted + cached App installation token (App mode),
+/// else the static GITHUB_TOKEN.
+async fn github_token(st: &AppState) -> String {
+    if st.cfg.app_mode {
+        {
+            let c = st.installation_token.lock().unwrap();
+            if let Some(t) = &c.0 {
+                if now() < c.1 {
+                    return t.clone();
+                }
+            }
+        }
+        match mint_installation_token(st).await {
+            Ok((tok, exp)) => {
+                *st.installation_token.lock().unwrap() = (Some(tok.clone()), exp);
+                return tok;
+            }
+            Err(e) => tracing::error!("GitHub App token mint failed: {e}"),
+        }
+    }
+    st.cfg.github_token.clone().unwrap_or_default()
+}
+
+/// Mint a ~1h GitHub App installation token (RS256 JWT → installation access token).
+async fn mint_installation_token(st: &AppState) -> anyhow::Result<(String, i64)> {
+    use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+    let app_id = st.cfg.github_app_id.as_deref().ok_or_else(|| anyhow::anyhow!("no app id"))?;
+    let inst = st.cfg.github_app_installation_id.as_deref().ok_or_else(|| anyhow::anyhow!("no installation id"))?;
+    let pem = st.cfg.github_app_key.as_deref().ok_or_else(|| anyhow::anyhow!("no app key"))?;
+
+    #[derive(serde::Serialize)]
+    struct Claims {
+        iat: i64,
+        exp: i64,
+        iss: String,
+    }
+    let nowt = now();
+    let claims = Claims { iat: nowt - 60, exp: nowt + 540, iss: app_id.to_string() };
+    let jwt = encode(&Header::new(Algorithm::RS256), &claims, &EncodingKey::from_rsa_pem(pem)?)?;
+
+    let url = format!("https://api.github.com/app/installations/{inst}/access_tokens");
+    let resp = st
+        .http
+        .post(&url)
+        .bearer_auth(&jwt)
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        let code = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        anyhow::bail!("installation token {code}: {body}");
+    }
+    let v: serde_json::Value = resp.json().await?;
+    let token = v["token"].as_str().ok_or_else(|| anyhow::anyhow!("no token in response"))?.to_string();
+    Ok((token, nowt + 3300)) // ~1h tokens; refresh at 55 min
+}
+
 async fn dispatch_build(st: &AppState, build_id: &str, defconfig: &str, commit: Option<&str>) -> anyhow::Result<()> {
     let url = format!("https://api.github.com/repos/{}/dispatches", st.cfg.github_repo);
     let mut cp = serde_json::Map::new();
@@ -1129,7 +1212,7 @@ async fn dispatch_build(st: &AppState, build_id: &str, defconfig: &str, commit: 
     let resp = st
         .http
         .post(&url)
-        .bearer_auth(&st.cfg.github_token)
+        .bearer_auth(github_token(st).await)
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
         .json(&payload)
@@ -1149,7 +1232,7 @@ async fn cancel_run(st: &AppState, run_id: i64) -> anyhow::Result<()> {
     let _ = st
         .http
         .post(&url)
-        .bearer_auth(&st.cfg.github_token)
+        .bearer_auth(github_token(st).await)
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
         .send()
@@ -1162,7 +1245,7 @@ async fn delete_run(st: &AppState, run_id: i64) -> anyhow::Result<()> {
     let _ = st
         .http
         .delete(&url)
-        .bearer_auth(&st.cfg.github_token)
+        .bearer_auth(github_token(st).await)
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
         .send()
@@ -1175,7 +1258,7 @@ async fn delete_release_assets(st: &AppState, build_id: &str) -> anyhow::Result<
     let v: serde_json::Value = st
         .http
         .get(&url)
-        .bearer_auth(&st.cfg.github_token)
+        .bearer_auth(github_token(st).await)
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
         .send()
@@ -1191,7 +1274,7 @@ async fn delete_release_assets(st: &AppState, build_id: &str) -> anyhow::Result<
                     let _ = st
                         .http
                         .delete(&durl)
-                        .bearer_auth(&st.cfg.github_token)
+                        .bearer_auth(github_token(st).await)
                         .header("Accept", "application/vnd.github+json")
                         .header("X-GitHub-Api-Version", "2022-11-28")
                         .send()

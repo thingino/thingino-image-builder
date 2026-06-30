@@ -47,6 +47,14 @@ Resolving thingino's commit is an unauthenticated public read, so the token need
 no access to `themactep/thingino-firmware`. A classic PAT with `repo` + `workflow`
 also works.
 
+**GitHub App (preferred long-term).** Instead of a token, install a GitHub App on
+the repo (Contents R/W + Actions R/W) and set `GITHUB_APP_ID`,
+`GITHUB_APP_INSTALLATION_ID`, and `GITHUB_APP_KEY_PATH` (the App's `.pem`) in `.env`
+— the broker mints short-lived installation tokens itself, so nothing long-lived
+sits on the box and there's no annual expiry. Mount the key by uncommenting the
+`Volume` line in `deploy/quadlet/thingino-broker.container` and using
+`GITHUB_APP_KEY_PATH=/app/app-key.pem`.
+
 ## TLS
 
 - **Automatic (default):** set `DOMAIN`; Caddy provisions + renews a free Let's
