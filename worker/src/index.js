@@ -202,6 +202,18 @@ async function handleStats(request, env) {
   }, 200, env);
 }
 async function handleBuild(request, env) {
+  const rawIp = request.headers.get("CF-Connecting-IP") || "";
+  const ip = ipBucket(rawIp);
+  // Optional per-IP request cap in FRONT of all the D1 work, so a /api/build flood
+  // can't burn the D1 budget (audit F12). Uses the Workers Rate Limiting binding —
+  // self-disables when unbound. NOTE: verified to be a no-op on the free plan
+  // (limit() always returns success), so it only enforces on Workers Paid; bind
+  // BUILD_RL in wrangler.toml there to enable. On free, the (race-free) build caps
+  // are the practical protection; a flood degrades D1 (transient), not a compromise.
+  if (env.BUILD_RL) {
+    const { success } = await env.BUILD_RL.limit({ key: ip });
+    if (!success) return json({ error: "too many requests from your network — slow down" }, 429, env);
+  }
   let body;
   try { body = await request.json(); } catch { return json({ error: "bad request" }, 400, env); }
   const defconfig = (body.defconfig || "").trim();
@@ -209,8 +221,6 @@ async function handleBuild(request, env) {
   if (!list.includes(defconfig)) return json({ error: "unknown defconfig" }, 400, env);
 
   const uid = resolveUid(request);
-  const rawIp = request.headers.get("CF-Connecting-IP") || "";
-  const ip = ipBucket(rawIp);
   const ts = nowSec(), cfg = await limits(env);
   // Hourly window, but never count builds from before an admin "reset limits".
   const resetTs = parseInt((await getSetting(env, "limits_reset_ts")) || "0", 10);
