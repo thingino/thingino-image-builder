@@ -30,6 +30,19 @@ wrangler secret put GITHUB_TOKEN
 wrangler deploy
 ```
 
+### CI deploy (git push = deploy)
+
+`.github/workflows/deploy-worker.yml` runs `wrangler deploy` on every push that
+touches `worker/`. It needs two repo secrets — set once:
+
+```bash
+gh secret set CLOUDFLARE_API_TOKEN   # Workers Scripts:Edit + D1:Edit
+gh secret set CLOUDFLARE_ACCOUNT_ID  # your account id
+```
+
+The Worker's own `GITHUB_TOKEN` is a **Cloudflare** secret (`wrangler secret put`)
+and persists across deploys — it is never stored in the repo.
+
 ## Frontend on GitHub Pages
 
 The static site is `../web`. Host it on GitHub Pages (repo **Settings → Pages**).

@@ -215,8 +215,20 @@ async function handleBuild(request, env) {
   await env.DB.prepare("INSERT INTO builds(id,uid,ip_bucket,defconfig,state,created_ts,commit_sha) VALUES(?,?,?,?,'queued',?,?)")
     .bind(id, uid, ip, defconfig, ts, commit).run();
   await logEvent(env, "queued", id, uid, ip, defconfig);
-  const pos = await countQ(env, "SELECT count(*) c FROM builds WHERE state='queued'");
-  return json({ build_id: id, defconfig, state: "queued", position: pos, status_url: `/api/status/${id}`, download_url: assetUrl(env, id), commit }, 202, env);
+
+  // Inline dispatch: if a slot is free, fire the build NOW rather than waiting for
+  // the next cron tick. The cron is only a fallback/reconciler for the rest.
+  let state = "queued", position = 0;
+  if ((await countQ(env, "SELECT count(*) c FROM builds WHERE state='running'")) < cfg.maxConcurrent) {
+    try {
+      await dispatchBuild(env, id, defconfig, commit);
+      await env.DB.prepare("UPDATE builds SET state='running', dispatched_ts=? WHERE id=?").bind(nowSec(), id).run();
+      await logEvent(env, "dispatched", id, uid, ip, defconfig);
+      state = "running";
+    } catch (_) { /* stays queued; the cron retries */ }
+  }
+  if (state === "queued") position = await countQ(env, "SELECT count(*) c FROM builds WHERE state='queued'");
+  return json({ build_id: id, defconfig, state, position, status_url: `/api/status/${id}`, download_url: assetUrl(env, id), commit }, 202, env);
 }
 async function handleStatus(id, env) {
   if (!validBuildId(id)) return json({ error: "bad build_id" }, 400, env);
@@ -239,7 +251,7 @@ async function handleStatus(id, env) {
 async function handleCancel(id, request, env) {
   if (!validBuildId(id)) return json({ error: "bad build_id" }, 400, env);
   const uid = resolveUid(request);
-  const b = await env.DB.prepare("SELECT uid,state FROM builds WHERE id=?").bind(id).first();
+  const b = await env.DB.prepare("SELECT uid,state,run_id FROM builds WHERE id=?").bind(id).first();
   if (!b) return json({ error: "unknown build" }, 404, env);
   if (b.uid !== uid) return json({ error: "not your build" }, 403, env);
   if (b.state === "queued") {
@@ -249,7 +261,18 @@ async function handleCancel(id, request, env) {
   }
   if (b.state === "running") {
     await env.DB.prepare("UPDATE builds SET cancel_requested=1 WHERE id=?").bind(id).run();
-    await logEvent(env, "cancel_requested", id, uid, null, "cancel requested while running");
+    // Stop the GitHub run NOW if we can find it, rather than waiting for the cron.
+    let note = "cancel queued (run not yet listed)";
+    try {
+      const runs = await fetchRuns(env);
+      const m = runs.find((r) => (b.run_id && r.run_id === b.run_id) || r.name.includes(id));
+      if (m) {
+        await cancelRun(env, m.run_id);
+        await env.DB.prepare("UPDATE builds SET run_id=? WHERE id=?").bind(m.run_id, id).run();
+        note = "cancel sent to run";
+      }
+    } catch (_) { /* cron will retry */ }
+    await logEvent(env, "cancel_requested", id, uid, null, note);
     return json({ state: "cancelling" }, 200, env);
   }
   return json({ state: "already finished" }, 200, env);
@@ -320,10 +343,13 @@ async function schedulerStep(env) {
         await logEvent(env, "cancelled", b.id, null, null, "run stopped + deleted");
       } else if (m) {
         await cancelRun(env, m.run_id);
-      } else {
+      } else if (b.dispatched_ts && ts - b.dispatched_ts > 180) {
+        // Give up only after a grace window — otherwise we'd orphan a run that
+        // simply hasn't appeared in the runs list yet.
         await env.DB.prepare("UPDATE builds SET state='cancelled', finished_ts=? WHERE id=?").bind(ts, b.id).run();
-        await logEvent(env, "cancelled", b.id, null, null, "cancelled (run not found)");
+        await logEvent(env, "cancelled", b.id, null, null, "cancelled (run not found after grace)");
       }
+      // else: stay 'cancelling' and retry next tick
       continue;
     }
     if (m) {
