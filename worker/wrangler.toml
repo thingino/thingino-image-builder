@@ -15,9 +15,11 @@ database_id = "5e72dc96-8856-4418-b59f-d872bca8330f"
 
 # Per-IP request throttle in FRONT of /api/build's D1 work (audit F12). The Worker
 # code (handleBuild) uses this binding when present and self-disables when absent.
-# VERIFIED: the Workers Rate Limiting binding is a NO-OP on the free plan (limit()
-# always returns success), so it's commented out here. On Workers Paid ($5/mo),
-# uncomment to enable a 20-build-requests/60s-per-IP cap (period must be 10 or 60):
+# VERIFIED a NO-OP on the free plan: a sustained 24-request test, ~1.5s apart at a
+# 5/10s cap, never tripped (limit() always returns success). It deploys + Cloudflare
+# shows it as a Rate Limit binding, but never meters on free workers.dev. Left
+# commented so it isn't a misleading no-op; the code self-disables when unbound. On
+# Workers Paid ($5/mo) uncomment to enable a 20-req/60s-per-IP cap (period = 10 or 60):
 # [[ratelimits]]
 # name = "BUILD_RL"
 # namespace_id = "1001"
