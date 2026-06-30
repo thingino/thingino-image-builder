@@ -1,0 +1,398 @@
+// Thingino web-builder — Cloudflare Worker broker (proof of concept).
+//
+// Ports the core of the Rust/VPS broker onto Cloudflare's free tier:
+//   * fetch handler  = the HTTP API (build / status / cancel / stats / defconfigs)
+//   * scheduled (cron, every 1 min) = dispatch queued, correlate runs, reap
+//   * D1             = the SQLite state (builds / events / settings)
+//   * Worker Secret  = GITHUB_TOKEN
+//
+// The GitHub Actions build (build.yml) and the rolling-release download are
+// unchanged. The frontend (GitHub Pages / Cloudflare Pages) calls this over CORS.
+//
+// Not yet ported here (straightforward follow-ups): admin panel + TOTP 2FA
+// (Web Crypto HMAC-SHA1) and GitHub App auth (Web Crypto RS256 JWT).
+
+const WINDOW = 3600;
+const DAY = 86400;
+
+const nowSec = () => Math.floor(Date.now() / 1000);
+const uuid = () => crypto.randomUUID();
+const validUid = (s) => typeof s === "string" && /^[a-zA-Z0-9-]{8,64}$/.test(s);
+const validBuildId = (s) => typeof s === "string" && /^[a-f0-9-]{8,40}$/.test(s);
+
+function limits(env) {
+  const n = (k, d) => parseInt(env[k] || "", 10) || d;
+  return {
+    userHourly: n("PER_USER_HOURLY_LIMIT", 2),
+    ipHourly: n("PER_IP_HOURLY_LIMIT", 3),
+    globalHourly: n("GLOBAL_HOURLY_LIMIT", 20),
+    maxConcurrent: n("MAX_CONCURRENT_BUILDS", 6),
+    maxQueue: n("MAX_QUEUE", 50),
+    retention: n("RETENTION_SECS", 1800),
+    failedRetention: n("FAILED_RETENTION_SECS", 3600),
+    buildTimeout: n("BUILD_TIMEOUT_SECS", 5400),
+  };
+}
+
+const assetUrl = (env, id) =>
+  `https://github.com/${env.GITHUB_REPO}/releases/download/${env.ROLLING_TAG || "web-builds"}/${id}.bin`;
+
+// ---- CORS + JSON ----------------------------------------------------------
+function cors(env) {
+  return {
+    "Access-Control-Allow-Origin": env.ALLOW_ORIGIN || "*",
+    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    "Access-Control-Allow-Headers": "content-type,x-builder-uid",
+    "Vary": "Origin",
+  };
+}
+const json = (obj, status, env) =>
+  new Response(JSON.stringify(obj), {
+    status: status || 200,
+    headers: { "content-type": "application/json", ...cors(env) },
+  });
+
+// Bucket the client IP: full v4, /64 for v6 (a user usually owns a whole /64).
+function ipBucket(ip) {
+  if (!ip) return "v4:0.0.0.0";
+  if (ip.includes(":")) {
+    const [head, tail = ""] = ip.split("::");
+    const h = head ? head.split(":").filter(Boolean) : [];
+    const t = tail ? tail.split(":").filter(Boolean) : [];
+    const fill = Math.max(0, 8 - h.length - t.length);
+    const groups = [...h, ...Array(fill).fill("0"), ...t];
+    const px = groups.slice(0, 4).map((g) => (parseInt(g || "0", 16) || 0).toString(16).padStart(4, "0")).join(":");
+    return `v6:${px}::/64`;
+  }
+  return `v4:${ip}`;
+}
+function resolveUid(request) {
+  const h = request.headers.get("x-builder-uid");
+  return validUid(h) ? h : uuid();
+}
+
+// ---- D1 helpers -----------------------------------------------------------
+const countQ = async (env, sql, ...args) =>
+  ((await env.DB.prepare(sql).bind(...args).first()) || { c: 0 }).c;
+const getSetting = async (env, key) => {
+  const r = await env.DB.prepare("SELECT value FROM settings WHERE key=?").bind(key).first();
+  return r ? r.value : null;
+};
+const setSetting = (env, key, value) =>
+  env.DB.prepare("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+    .bind(key, value).run();
+const logEvent = (env, kind, build_id, uid, ip, detail) =>
+  env.DB.prepare("INSERT INTO events(ts,kind,build_id,uid,ip_bucket,detail) VALUES(?,?,?,?,?,?)")
+    .bind(nowSec(), kind, build_id || null, uid || null, ip || null, detail || "").run();
+
+// ---- GitHub ---------------------------------------------------------------
+function ghHeaders(env, auth) {
+  const h = {
+    Accept: "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+    "User-Agent": "thingino-web-builder-worker",
+  };
+  if (auth && env.GITHUB_TOKEN) h.Authorization = `Bearer ${env.GITHUB_TOKEN}`;
+  return h;
+}
+const ghFetch = (env, url, opts = {}) =>
+  fetch(url, { ...opts, headers: { ...ghHeaders(env, true), ...(opts.headers || {}) } });
+
+// thingino pinned commit + defconfig list, cached in D1 settings (~5 min).
+async function resolveThingino(env) {
+  const ts = parseInt((await getSetting(env, "thingino_ts")) || "0", 10);
+  let commit = await getSetting(env, "thingino_commit");
+  let listJson = await getSetting(env, "defconfigs");
+  if (commit && listJson && nowSec() - ts < 300) return { commit, list: JSON.parse(listJson) };
+
+  const repo = env.THINGINO_REPO || "themactep/thingino-firmware";
+  const ref = env.THINGINO_REF || "master";
+  try {
+    const cr = await fetch(`https://api.github.com/repos/${repo}/commits/${ref}`, { headers: ghHeaders(env, false) });
+    if (cr.ok) {
+      const newCommit = (await cr.json()).sha;
+      if (newCommit && newCommit !== commit) {
+        const list = await fetchDefconfigs(env, repo, newCommit);
+        if (list.length) {
+          listJson = JSON.stringify(list);
+          await setSetting(env, "defconfigs", listJson);
+        }
+        commit = newCommit;
+        await setSetting(env, "thingino_commit", commit);
+      }
+      await setSetting(env, "thingino_ts", String(nowSec()));
+    }
+  } catch (_) { /* keep last-good */ }
+  return { commit: commit || null, list: listJson ? JSON.parse(listJson) : [] };
+}
+async function fetchDir(env, repo, commit, subdir) {
+  const r = await fetch(`https://api.github.com/repos/${repo}/contents/configs/${subdir}?ref=${commit}`, {
+    headers: ghHeaders(env, false),
+  });
+  if (!r.ok) return [];
+  const arr = await r.json();
+  return Array.isArray(arr)
+    ? arr.filter((e) => e.type === "dir" && /^[a-z0-9_+]+$/.test(e.name)).map((e) => e.name)
+    : [];
+}
+async function fetchDefconfigs(env, repo, commit) {
+  const a = await fetchDir(env, repo, commit, "cameras");
+  const b = await fetchDir(env, repo, commit, "cameras-exp");
+  return [...new Set([...a, ...b])].sort();
+}
+
+// ---- API handlers ---------------------------------------------------------
+async function handleDefconfigs(env) {
+  const { list } = await resolveThingino(env);
+  return json(list, 200, env);
+}
+async function handleStats(request, env) {
+  const uid = resolveUid(request);
+  const { commit } = await resolveThingino(env);
+  const cfg = limits(env);
+  return json({
+    running: await countQ(env, "SELECT count(*) c FROM builds WHERE state='running'"),
+    queued: await countQ(env, "SELECT count(*) c FROM builds WHERE state='queued'"),
+    max_concurrent: cfg.maxConcurrent,
+    builds_enabled: (await getSetting(env, "builds_enabled")) !== "0",
+    commit,
+    version: "worker-poc",
+    uid,
+  }, 200, env);
+}
+async function handleBuild(request, env) {
+  let body;
+  try { body = await request.json(); } catch { return json({ error: "bad request" }, 400, env); }
+  const defconfig = (body.defconfig || "").trim();
+  const { commit, list } = await resolveThingino(env);
+  if (!list.includes(defconfig)) return json({ error: "unknown defconfig" }, 400, env);
+
+  const uid = resolveUid(request);
+  const ip = ipBucket(request.headers.get("CF-Connecting-IP"));
+  const ts = nowSec(), cutoff = ts - WINDOW, cfg = limits(env);
+
+  if ((await getSetting(env, "builds_enabled")) === "0")
+    return json({ error: "builds are temporarily disabled" }, 503, env);
+
+  // Dedup: identical (defconfig, commit) in flight or done within retention.
+  if (commit) {
+    const e = await env.DB.prepare(
+      `SELECT id,state,cancel_requested FROM builds
+       WHERE defconfig=? AND commit_sha=?
+         AND (state IN ('queued','running') OR (state='done' AND finished_ts > ?))
+         AND NOT (state='running' AND cancel_requested=1)
+       ORDER BY created_ts DESC LIMIT 1`
+    ).bind(defconfig, commit, ts - cfg.retention).first();
+    if (e) {
+      await logEvent(env, "dedup", e.id, uid, ip, `reused ${e.state} for ${defconfig}`);
+      const st = e.state === "running" && e.cancel_requested ? "cancelling" : e.state;
+      return json({
+        build_id: e.id, defconfig, state: st, deduped: true,
+        download_url: st === "done" ? assetUrl(env, e.id) : null,
+        status_url: `/api/status/${e.id}`, commit,
+      }, 200, env);
+    }
+  }
+
+  if ((await countQ(env, "SELECT count(*) c FROM builds WHERE state='queued'")) >= cfg.maxQueue)
+    return json({ error: "the build queue is full, try again shortly" }, 503, env);
+
+  const notCancelledUndispatched = "NOT (state='cancelled' AND dispatched_ts IS NULL)";
+  if ((await countQ(env, `SELECT count(*) c FROM builds WHERE created_ts > ? AND ${notCancelledUndispatched}`, cutoff)) >= cfg.globalHourly) {
+    await logEvent(env, "rate_limited", null, uid, ip, "global hourly limit");
+    return json({ error: `the builder is at its hourly limit (${cfg.globalHourly}/hr) — try again later` }, 429, env);
+  }
+  if ((await countQ(env, `SELECT count(*) c FROM builds WHERE uid=? AND created_ts > ? AND ${notCancelledUndispatched}`, uid, cutoff)) >= cfg.userHourly) {
+    await logEvent(env, "rate_limited", null, uid, ip, "per-user hourly limit");
+    return json({ error: `you've reached ${cfg.userHourly} builds this hour — try again later` }, 429, env);
+  }
+  if ((await countQ(env, `SELECT count(*) c FROM builds WHERE ip_bucket=? AND created_ts > ? AND ${notCancelledUndispatched}`, ip, cutoff)) >= cfg.ipHourly) {
+    await logEvent(env, "rate_limited", null, uid, ip, "per-ip hourly limit");
+    return json({ error: "too many builds from your network this hour — try again later" }, 429, env);
+  }
+
+  const id = uuid();
+  await env.DB.prepare("INSERT INTO builds(id,uid,ip_bucket,defconfig,state,created_ts,commit_sha) VALUES(?,?,?,?,'queued',?,?)")
+    .bind(id, uid, ip, defconfig, ts, commit).run();
+  await logEvent(env, "queued", id, uid, ip, defconfig);
+  const pos = await countQ(env, "SELECT count(*) c FROM builds WHERE state='queued'");
+  return json({ build_id: id, defconfig, state: "queued", position: pos, status_url: `/api/status/${id}`, download_url: assetUrl(env, id), commit }, 202, env);
+}
+async function handleStatus(id, env) {
+  if (!validBuildId(id)) return json({ error: "bad build_id" }, 400, env);
+  const b = await env.DB.prepare(
+    "SELECT defconfig,state,created_ts,dispatched_ts,finished_ts,cancel_requested FROM builds WHERE id=?"
+  ).bind(id).first();
+  if (!b) return json({ error: "unknown build" }, 404, env);
+  const ts = nowSec();
+  const state = b.state === "running" && b.cancel_requested ? "cancelling" : b.state;
+  let position = 0;
+  if (state === "queued")
+    position = await countQ(env, "SELECT count(*) c FROM builds WHERE state='queued' AND created_ts <= ?", b.created_ts);
+  let elapsed = 0;
+  if (state === "running" || state === "cancelling") elapsed = b.dispatched_ts ? ts - b.dispatched_ts : 0;
+  else if (state === "queued") elapsed = ts - b.created_ts;
+  else if (b.finished_ts && b.dispatched_ts) elapsed = b.finished_ts - b.dispatched_ts;
+  const ready = state === "done";
+  return json({ build_id: id, defconfig: b.defconfig, state, ready, position, elapsed_secs: elapsed, download_url: ready ? assetUrl(env, id) : null }, 200, env);
+}
+async function handleCancel(id, request, env) {
+  if (!validBuildId(id)) return json({ error: "bad build_id" }, 400, env);
+  const uid = resolveUid(request);
+  const b = await env.DB.prepare("SELECT uid,state FROM builds WHERE id=?").bind(id).first();
+  if (!b) return json({ error: "unknown build" }, 404, env);
+  if (b.uid !== uid) return json({ error: "not your build" }, 403, env);
+  if (b.state === "queued") {
+    await env.DB.prepare("UPDATE builds SET state='cancelled', finished_ts=? WHERE id=?").bind(nowSec(), id).run();
+    await logEvent(env, "cancelled", id, uid, null, "cancelled while queued");
+    return json({ state: "cancelled" }, 200, env);
+  }
+  if (b.state === "running") {
+    await env.DB.prepare("UPDATE builds SET cancel_requested=1 WHERE id=?").bind(id).run();
+    await logEvent(env, "cancel_requested", id, uid, null, "cancel requested while running");
+    return json({ state: "cancelling" }, 200, env);
+  }
+  return json({ state: "already finished" }, 200, env);
+}
+
+// ---- scheduler (cron) -----------------------------------------------------
+async function dispatchBuild(env, id, defconfig, commit) {
+  const cp = { build_id: id, defconfig };
+  if (commit) cp.commit = commit;
+  const r = await ghFetch(env, `https://api.github.com/repos/${env.GITHUB_REPO}/dispatches`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ event_type: "web-build", client_payload: cp }),
+  });
+  if (!r.ok) throw new Error(`dispatch ${r.status}`);
+}
+async function fetchRuns(env) {
+  const r = await ghFetch(env, `https://api.github.com/repos/${env.GITHUB_REPO}/actions/runs?per_page=50&event=repository_dispatch`);
+  if (!r.ok) return [];
+  return ((await r.json()).workflow_runs || []).map((x) => ({
+    run_id: x.id, name: x.name || x.display_title || "", status: x.status || "", conclusion: x.conclusion || null,
+  }));
+}
+const cancelRun = (env, runId) =>
+  ghFetch(env, `https://api.github.com/repos/${env.GITHUB_REPO}/actions/runs/${runId}/cancel`, { method: "POST" }).catch(() => {});
+async function deleteRun(env, runId) {
+  try {
+    const r = await ghFetch(env, `https://api.github.com/repos/${env.GITHUB_REPO}/actions/runs/${runId}`, { method: "DELETE" });
+    return r.ok || r.status === 404;
+  } catch { return false; }
+}
+async function deleteReleaseAssets(env, id) {
+  try {
+    const r = await ghFetch(env, `https://api.github.com/repos/${env.GITHUB_REPO}/releases/tags/${env.ROLLING_TAG || "web-builds"}`);
+    if (r.status === 404) return true;
+    if (!r.ok) return false;
+    const v = await r.json();
+    const targets = [`${id}.bin`, `${id}.bin.sha256sum`];
+    let ok = true;
+    for (const a of v.assets || []) {
+      if (targets.includes(a.name)) {
+        const d = await ghFetch(env, `https://api.github.com/repos/${env.GITHUB_REPO}/releases/assets/${a.id}`, { method: "DELETE" });
+        if (!(d.ok || d.status === 404)) ok = false;
+      }
+    }
+    return ok;
+  } catch { return false; }
+}
+
+async function schedulerStep(env) {
+  const ts = nowSec(), cfg = limits(env);
+  await resolveThingino(env);
+
+  const running = ((await env.DB.prepare("SELECT id,run_id,dispatched_ts,cancel_requested FROM builds WHERE state='running'").all()).results) || [];
+  const slots = Math.max(0, cfg.maxConcurrent - running.length);
+  const queued = slots > 0
+    ? ((await env.DB.prepare("SELECT id,defconfig,commit_sha FROM builds WHERE state='queued' ORDER BY created_ts ASC LIMIT ?").bind(slots).all()).results) || []
+    : [];
+
+  const runs = running.length ? await fetchRuns(env) : [];
+
+  for (const b of running) {
+    const m = runs.find((r) => (b.run_id && r.run_id === b.run_id) || r.name.includes(b.id));
+    if (b.cancel_requested) {
+      if (m && m.status === "completed") {
+        await deleteRun(env, m.run_id);
+        await env.DB.prepare("UPDATE builds SET state='cancelled', finished_ts=?, run_id=NULL WHERE id=?").bind(ts, b.id).run();
+        await logEvent(env, "cancelled", b.id, null, null, "run stopped + deleted");
+      } else if (m) {
+        await cancelRun(env, m.run_id);
+      } else {
+        await env.DB.prepare("UPDATE builds SET state='cancelled', finished_ts=? WHERE id=?").bind(ts, b.id).run();
+        await logEvent(env, "cancelled", b.id, null, null, "cancelled (run not found)");
+      }
+      continue;
+    }
+    if (m) {
+      if (!b.run_id) await env.DB.prepare("UPDATE builds SET run_id=? WHERE id=?").bind(m.run_id, b.id).run();
+      if (m.status === "completed") {
+        const st = m.conclusion === "success" ? "done" : m.conclusion === "cancelled" ? "cancelled" : "failed";
+        await env.DB.prepare("UPDATE builds SET state=?, finished_ts=? WHERE id=?").bind(st, ts, b.id).run();
+        await logEvent(env, st, b.id, null, null, `run ${m.run_id} ${m.conclusion || "?"}`);
+      }
+    } else if (ts - (b.dispatched_ts || ts) > cfg.buildTimeout) {
+      await env.DB.prepare("UPDATE builds SET state='failed', finished_ts=? WHERE id=?").bind(ts, b.id).run();
+      await logEvent(env, "failed", b.id, null, null, "timed out / run not found");
+    }
+  }
+
+  for (const q of queued) {
+    const still = await env.DB.prepare("SELECT 1 FROM builds WHERE id=? AND state='queued'").bind(q.id).first();
+    if (!still) continue;
+    try {
+      await dispatchBuild(env, q.id, q.defconfig, q.commit_sha);
+      await env.DB.prepare("UPDATE builds SET state='running', dispatched_ts=? WHERE id=?").bind(nowSec(), q.id).run();
+      await logEvent(env, "dispatched", q.id, null, null, q.defconfig);
+    } catch (_) {
+      await env.DB.prepare("UPDATE builds SET attempts=attempts+1 WHERE id=?").bind(q.id).run();
+      const at = ((await env.DB.prepare("SELECT attempts FROM builds WHERE id=?").bind(q.id).first()) || { attempts: 0 }).attempts;
+      if (at >= 3) {
+        await env.DB.prepare("UPDATE builds SET state='failed', finished_ts=? WHERE id=?").bind(nowSec(), q.id).run();
+        await logEvent(env, "failed", q.id, null, null, "dispatch failed 3x");
+      }
+    }
+  }
+
+  const reap = ((await env.DB.prepare("SELECT id,state,run_id,finished_ts FROM builds WHERE state IN ('done','failed','cancelled') AND finished_ts IS NOT NULL").all()).results) || [];
+  for (const b of reap) {
+    const age = ts - b.finished_ts;
+    const expired = b.state === "done" ? age > cfg.retention : age > cfg.failedRetention;
+    if (!expired) continue;
+    const assetOk = b.state === "done" ? await deleteReleaseAssets(env, b.id) : true;
+    const runOk = b.run_id ? await deleteRun(env, b.run_id) : true;
+    if (assetOk && runOk) {
+      await env.DB.prepare("UPDATE builds SET state='expired' WHERE id=?").bind(b.id).run();
+      await logEvent(env, "expired", b.id, null, null, `reaped ${b.state}`);
+    }
+  }
+
+  await env.DB.prepare("DELETE FROM builds WHERE state='expired' AND finished_ts < ?").bind(ts - 7 * DAY).run();
+  await env.DB.prepare("DELETE FROM events WHERE ts < ?").bind(ts - 30 * DAY).run();
+}
+
+// ---- entrypoints ----------------------------------------------------------
+export default {
+  async fetch(request, env, _ctx) {
+    if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors(env) });
+    const p = new URL(request.url).pathname;
+    try {
+      if (p === "/api/health") return new Response("ok", { headers: cors(env) });
+      if (p === "/api/defconfigs" && request.method === "GET") return await handleDefconfigs(env);
+      if (p === "/api/stats" && request.method === "GET") return await handleStats(request, env);
+      if (p === "/api/build" && request.method === "POST") return await handleBuild(request, env);
+      let m;
+      if ((m = p.match(/^\/api\/status\/(.+)$/)) && request.method === "GET") return await handleStatus(m[1], env);
+      if ((m = p.match(/^\/api\/cancel\/(.+)$/)) && request.method === "POST") return await handleCancel(m[1], request, env);
+      return json({ error: "not found" }, 404, env);
+    } catch (e) {
+      return json({ error: "internal error" }, 500, env);
+    }
+  },
+
+  async scheduled(_event, env, ctx) {
+    ctx.waitUntil(schedulerStep(env));
+  },
+};

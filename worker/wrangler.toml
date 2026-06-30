@@ -1,0 +1,33 @@
+name = "thingino-web-builder"
+main = "src/index.js"
+compatibility_date = "2025-06-01"
+
+# Scheduler + reaper run on a cron (Cloudflare's minimum interval is 1 minute).
+[triggers]
+crons = ["* * * * *"]
+
+# D1 (SQLite at the edge). Create it with `wrangler d1 create thingino-builder`
+# and paste the printed database_id here.
+[[d1_databases]]
+binding = "DB"
+database_name = "thingino-builder"
+database_id = "5e72dc96-8856-4418-b59f-d872bca8330f"
+
+[vars]
+GITHUB_REPO = "thingino/thingino-web-builder"
+THINGINO_REPO = "themactep/thingino-firmware"
+THINGINO_REF = "master"
+ROLLING_TAG = "web-builds"
+PER_USER_HOURLY_LIMIT = "2"
+PER_IP_HOURLY_LIMIT = "3"
+GLOBAL_HOURLY_LIMIT = "20"
+MAX_CONCURRENT_BUILDS = "6"
+MAX_QUEUE = "50"
+RETENTION_SECS = "1800"
+FAILED_RETENTION_SECS = "3600"
+BUILD_TIMEOUT_SECS = "5400"
+# Origin allowed to call this Worker (your GitHub Pages site). Use "*" only for testing.
+ALLOW_ORIGIN = "https://thingino.github.io"
+
+# Secret (NOT a var) — set with: wrangler secret put GITHUB_TOKEN
+#   a fine-grained PAT (Contents R/W + Actions R/W) or classic repo+workflow.
