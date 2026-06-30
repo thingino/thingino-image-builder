@@ -2,26 +2,75 @@
 
 A public, rate-limited **web firmware builder** for
 [thingino](https://github.com/themactep/thingino-firmware). Pick a camera
-defconfig in the browser, submit, and GitHub Actions builds it for free — no
-build compute on our side.
+defconfig in the browser, submit, and it builds on **GitHub Actions** — no build
+compute on the server. A small Rust broker orchestrates; the heavy lifting is
+free CI.
 
-## Architecture
+## How it works
 
 ```
-browser ──POST /api/build──▶ Rust broker (cheap VPS) ──repository_dispatch──▶ GitHub Actions
-   ▲                          • holds the GitHub token (never shipped)            • clones thingino@master
-   │                          • global + per-IP hourly caps (SQLite)              • BOARD=<x> make fast
-   └──────── polls GitHub's public releases API ◀── publishes <build_id>.bin ─────┘  on rolling `web-builds` tag
+browser ──POST /api/build──▶ Rust broker ──repository_dispatch──▶ GitHub Actions
+  ▲  pick a defconfig          rate-limit · queue · dedup ·         build thingino@<commit>
+  │  poll status               pin commit · hold the token          upload <build_id>.bin
+  └───────────── download ◀── rolling `web-builds` pre-release ◀─────┘   (anonymous CDN)
 ```
 
-- **CI** — `.github/workflows/build.yml`. On `repository_dispatch` (event
-  `web-build`, payload `{build_id, defconfig}`) it mirrors the proven
-  `firmware-x86_64.yaml` recipe (debian:forky, apt deps, ccache + dl-cache),
-  builds one board, and uploads `<build_id>.bin` to the `web-builds`
-  pre-release for anonymous CDN download.
-- **broker/** *(todo)* — small Rust service on a VPS: validates the defconfig,
-  mints a `build_id`, enforces rate limits, fires the dispatch, serves the page.
-- **web/** *(todo)* — static UI: defconfig dropdown → submit → poll the release
-  asset → download link.
+- The broker **never builds** — it validates the request, enforces limits, mints a
+  `build_id`, pins thingino's current commit, and fires a `repository_dispatch`.
+- The workflow checks out that commit, runs `make fast`, and publishes
+  `<build_id>.bin` to a rolling pre-release for anonymous download.
+- Finished images are downloadable for **30 minutes**, then a reaper deletes the
+  release asset **and** the Actions run (logs included).
 
-Status: **proof-of-concept** — building a single existing defconfig end-to-end.
+## Features
+
+- **Defconfig picker** over all ~167 camera profiles; shows the exact thingino
+  commit being built.
+- **Dedup** — an identical `(defconfig, commit)` that's in flight or built within
+  the window is reused, not rebuilt.
+- **Limits** — per-user **2/hr**, per-IP **3/hr** (IPv6 bucketed by /64), global
+  **20/hr**, and **6** concurrent with a FIFO queue.
+- **Live status** — queue position, build progress, cancel (persisted
+  "cancelling" state until the run stops), 30-minute download window.
+- **Admin panel** (`/admin.html`) — live stats, recent builds/events with
+  requester uid + IP, a global **kill switch**, behind **TOTP 2FA**.
+- **Audit log**, **IPv6** end to end, **singleton** broker (flock + pidfile),
+  self-hosted frontend assets (no CDN).
+
+## Layout
+
+| Path | What |
+|---|---|
+| `broker/` | Rust control plane + scheduler (axum + SQLite) |
+| `web/` | static UI (Bootstrap; self-hosted assets in `web/vendor/`) |
+| `.github/workflows/build.yml` | the CI build worker (`repository_dispatch`) |
+| `Containerfile` | broker image |
+| `deploy/quadlet/`, `deploy.sh` | Podman + systemd (Quadlet) deployment |
+| `setup.sh`, `creds.sh` | generate / rotate the admin token + TOTP |
+| `DEPLOY.md` | full deployment guide |
+
+## Deploy
+
+Podman + Quadlet (systemd); TLS via Caddy (auto Let's Encrypt or BYO certs). Full
+guide in **[DEPLOY.md](DEPLOY.md)** — short version:
+
+```bash
+sudo git clone https://github.com/gtxaspec/thingino-web-builder.git /opt/thingino-web-builder
+cd /opt/thingino-web-builder
+sudo ./setup.sh          # generate admin token + TOTP (prints a QR)
+# edit .env: DOMAIN, GITHUB_REPO, GITHUB_TOKEN
+sudo ./deploy.sh         # build image, install Quadlet units, start
+```
+
+## Local dev
+
+```bash
+cd broker && cargo build
+GITHUB_TOKEN=$(gh auth token) GITHUB_REPO=<owner>/<repo> \
+  ADMIN_TOKEN=secret ADMIN_TOTP_SECRET=$(head -c 20 /dev/urandom | base32 | tr -d =) \
+  DEFCONFIGS_PATH=../defconfigs.json STATIC_DIR=../web \
+  ./target/debug/thingino-build-broker      # serves http://[::]:8080
+```
+
+`defconfigs.json` is the build allowlist (one entry per `configs/cameras/*`);
+regenerate it from a thingino checkout when boards change.
