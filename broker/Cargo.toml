@@ -18,7 +18,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = "1"
 libc = "0.2"
 hmac = "0.12"
-sha1 = "0.10"
+sha1 = "0.11"
 jsonwebtoken = "9"
 parking_lot = "0.12"
 
