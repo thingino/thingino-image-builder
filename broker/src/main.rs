@@ -310,6 +310,27 @@ fn require_master(headers: &HeaderMap, st: &AppState) -> Option<Response> {
     }
 }
 
+/// Does this admin identity hold a given privilege? The master always does (root); a named
+/// admin only if `priv_` is in their granted set (the `privileges` column, a JSON array of
+/// strings). Unknown user / NULL / empty / bad JSON → false. Mirrors the Worker's adminCan.
+/// Takes the already-locked connection (callers hold the DB lock) to avoid re-locking.
+fn admin_can(conn: &Connection, who: &str, priv_: &str) -> bool {
+    if who == "master" {
+        return true;
+    }
+    if who.is_empty() {
+        return false;
+    }
+    let stored: Option<String> = conn
+        .query_row("SELECT privileges FROM admins WHERE username=?1", [who], |r| r.get::<_, Option<String>>(0))
+        .ok()
+        .flatten();
+    stored
+        .filter(|s| !s.is_empty())
+        .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+        .is_some_and(|v| v.iter().any(|p| p == priv_))
+}
+
 // ---- TOTP (RFC 6238, Google Authenticator compatible) --------------------
 
 fn base32_decode(s: &str) -> Option<Vec<u8>> {
@@ -661,7 +682,8 @@ async fn main() -> anyhow::Result<()> {
             disabled INTEGER NOT NULL DEFAULT 0,
             created_ts INTEGER NOT NULL,
             created_by TEXT,
-            last_login INTEGER
+            last_login INTEGER,
+            privileges TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_admins_invite ON admins(invite_token);",
     )?;
@@ -669,6 +691,7 @@ async fn main() -> anyhow::Result<()> {
     let _ = conn.execute("ALTER TABLE builds ADD COLUMN commit_sha TEXT", []);
     let _ = conn.execute("ALTER TABLE builds ADD COLUMN ip_full TEXT", []);
     let _ = conn.execute("ALTER TABLE events ADD COLUMN ip_full TEXT", []);
+    let _ = conn.execute("ALTER TABLE admins ADD COLUMN privileges TEXT", []);
 
     let http = reqwest::Client::builder()
         .user_agent("thingino-web-builder-broker")
@@ -716,6 +739,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/admin/users", post(admin_invite).get(admin_list_users))
         .route("/api/admin/users/{username}", delete(admin_delete_user))
         .route("/api/admin/users/{username}/disable", post(admin_disable_user))
+        .route("/api/admin/users/{username}/privileges", post(admin_set_privileges))
         .route("/api/admin/invite/{token}", get(admin_get_invite))
         .route("/api/admin/accept-invite", post(admin_accept_invite))
         .route("/api/admin/logout", post(admin_logout))
@@ -1307,12 +1331,16 @@ async fn admin_expire(State(st): State<AppState>, headers: HeaderMap, Path(build
     Json(json!({ "ok": true, "state": "expired" })).into_response()
 }
 
-/// Admin: wipe the audit log.
+/// Admin: wipe the audit log. Requires the `clear_logs` privilege (or master).
 async fn admin_clear_logs(State(st): State<AppState>, headers: HeaderMap) -> Response {
-    if !session_ok(&headers, &st) {
+    let Some(identity) = session_admin(&headers, &st) else {
         return json_err(StatusCode::UNAUTHORIZED, "admin auth required");
-    }
+    };
     let conn = st.db.lock();
+    if !admin_can(&conn, &identity, "clear_logs") {
+        drop(conn);
+        return json_err(StatusCode::FORBIDDEN, "not permitted");
+    }
     // Keep recent admin_login_fail rows (within the throttle window) so wiping the audit
     // log can't be used to reset the per-IP brute-force throttle.
     let cleared = conn
@@ -1328,15 +1356,19 @@ async fn admin_clear_logs(State(st): State<AppState>, headers: HeaderMap) -> Res
 
 /// Admin: delete finished builds (done/failed/cancelled/expired) from the list; never queued/running.
 async fn admin_clear_builds(State(st): State<AppState>, headers: HeaderMap) -> Response {
-    if !session_ok(&headers, &st) {
+    let Some(identity) = session_admin(&headers, &st) else {
         return json_err(StatusCode::UNAUTHORIZED, "admin auth required");
-    }
+    };
     // Reap the GitHub artifacts for done/failed rows before deleting them, so clearing the
     // list doesn't orphan release assets / Actions runs (cancelled/expired already had theirs
     // removed by the reaper). Collect the rows + drop the lock before any GitHub .await —
     // never hold the DB mutex across an async call.
     let reap: Vec<(String, Option<i64>, String)> = {
         let conn = st.db.lock();
+        if !admin_can(&conn, &identity, "clear_builds") {
+            drop(conn);
+            return json_err(StatusCode::FORBIDDEN, "not permitted");
+        }
         let Ok(mut stmt) = conn.prepare("SELECT id, run_id, state FROM builds WHERE state IN ('done','failed')") else {
             return json_err(StatusCode::INTERNAL_SERVER_ERROR, "internal error");
         };
@@ -1362,11 +1394,16 @@ async fn admin_clear_builds(State(st): State<AppState>, headers: HeaderMap) -> R
 }
 
 /// Admin: reset the hourly rate-limit window (mark "now"; queries ignore earlier builds).
+/// Requires the `reset_limits` privilege (or master).
 async fn admin_reset_limits(State(st): State<AppState>, headers: HeaderMap) -> Response {
-    if !session_ok(&headers, &st) {
+    let Some(identity) = session_admin(&headers, &st) else {
         return json_err(StatusCode::UNAUTHORIZED, "admin auth required");
-    }
+    };
     let conn = st.db.lock();
+    if !admin_can(&conn, &identity, "reset_limits") {
+        drop(conn);
+        return json_err(StatusCode::FORBIDDEN, "not permitted");
+    }
     set_setting(&conn, "limits_reset_ts", &now().to_string());
     log_event(&conn, "admin_reset_limits", None, None, None, "hourly limits reset", None);
     drop(conn);
@@ -1501,6 +1538,43 @@ async fn admin_disable_user(State(st): State<AppState>, headers: HeaderMap, Path
         st.sessions.lock().retain(|_, (id, _)| id != &u);
     }
     Json(json!({ "ok": true })).into_response()
+}
+
+/// Master only: replace a named admin's granted privilege set (the per-action grants gated
+/// by `admin_can`). Unknown names are dropped and dupes collapsed (request order preserved);
+/// an empty/missing/non-array `privileges` clears all. Mirrors the Worker's set-privileges.
+async fn admin_set_privileges(State(st): State<AppState>, headers: HeaderMap, Path(username): Path<String>, raw: Bytes) -> Response {
+    if let Some(e) = require_master(&headers, &st) {
+        return e;
+    }
+    let Ok(body) = serde_json::from_slice::<serde_json::Value>(&raw) else {
+        return json_err(StatusCode::BAD_REQUEST, "bad request");
+    };
+    // Keep only the three known privileges, in request order, first-occurrence deduped — the
+    // Rust form of `[...new Set(body.privileges.filter((p) => ADMIN_PRIVS.includes(p)))]`.
+    let mut privs: Vec<String> = Vec::new();
+    if let Some(arr) = body.get("privileges").and_then(|v| v.as_array()) {
+        for item in arr {
+            if let Some(s) = item.as_str() {
+                if matches!(s, "clear_logs" | "clear_builds" | "reset_limits") && !privs.iter().any(|p| p == s) {
+                    privs.push(s.to_string());
+                }
+            }
+        }
+    }
+    let u = username.to_lowercase();
+    let stored = serde_json::to_string(&privs).unwrap_or_else(|_| "[]".to_string());
+    let conn = st.db.lock();
+    let changed = conn
+        .execute("UPDATE admins SET privileges=?1 WHERE username=?2", rusqlite::params![stored, u])
+        .unwrap_or(0);
+    if changed == 0 {
+        drop(conn);
+        return json_err(StatusCode::NOT_FOUND, "unknown user");
+    }
+    log_event(&conn, "admin_privileges", None, None, None, &format!("{u}: [{}]", privs.join(",")), None);
+    drop(conn);
+    Json(json!({ "ok": true, "username": u, "privileges": privs })).into_response()
 }
 
 /// Invite enrollment (no session — the invitee isn't an admin yet): fetch the TOTP secret.
@@ -1687,7 +1761,7 @@ fn query_recent_events(conn: &Connection, limit: i64) -> Vec<serde_json::Value> 
 
 fn query_admin_users(conn: &Connection) -> Vec<serde_json::Value> {
     let Ok(mut stmt) = conn.prepare(
-        "SELECT username, pw_hash, invite_expires, disabled, created_ts, last_login FROM admins ORDER BY created_ts DESC",
+        "SELECT username, pw_hash, invite_expires, disabled, created_ts, last_login, privileges FROM admins ORDER BY created_ts DESC",
     ) else {
         return vec![];
     };
@@ -1699,6 +1773,11 @@ fn query_admin_users(conn: &Connection) -> Vec<serde_json::Value> {
         let disabled: i64 = r.get(3)?;
         let created_ts: i64 = r.get(4)?;
         let last_login: Option<i64> = r.get(5)?;
+        let privileges_raw: Option<String> = r.get(6)?;
+        // The granted privilege set as a JSON array of strings (empty on NULL/parse error).
+        let privileges: Vec<String> = privileges_raw
+            .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+            .unwrap_or_default();
         let state = if disabled != 0 {
             "disabled"
         } else if pw_hash.is_some() {
@@ -1713,6 +1792,7 @@ fn query_admin_users(conn: &Connection) -> Vec<serde_json::Value> {
             "state": state,
             "created_ts": created_ts,
             "last_login": last_login,
+            "privileges": privileges,
         }))
     });
     match it {
