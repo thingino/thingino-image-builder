@@ -99,6 +99,8 @@ fn now() -> i64 {
 /// Builder version: Cargo package version + git short-sha (baked via BUILD_SHA at build time).
 fn version_string() -> String {
     match option_env!("BUILD_SHA") {
+        // A release tag (e.g. v1.2.0) IS the version.
+        Some(t) if t.starts_with('v') && t.as_bytes().get(1).is_some_and(|b| b.is_ascii_digit()) => t.to_string(),
         Some(sha) if !sha.is_empty() && sha != "dev" => format!("v{} ({sha})", env!("CARGO_PKG_VERSION")),
         _ => format!("v{}", env!("CARGO_PKG_VERSION")),
     }
