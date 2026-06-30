@@ -713,15 +713,15 @@ async function handleAdminInvite(request, env) {
 }
 async function handleAdminListUsers(request, env) {
   if ((await sessionAdmin(request, env)) !== "master") return json({ error: "master token required" }, 403, env);
-  const rows = (await env.DB.prepare("SELECT username,pw_hash,invite_expires,disabled,created_ts,last_login,privileges FROM admins ORDER BY created_ts DESC").all()).results || [];
+  const rows = (await env.DB.prepare("SELECT username,pw_hash,invite_token,invite_expires,disabled,created_ts,last_login,privileges FROM admins ORDER BY created_ts DESC").all()).results || [];
   const users = rows.map((r) => {
     let privileges = [];
     try { if (r.privileges) privileges = JSON.parse(r.privileges); } catch { privileges = []; }
-    return {
-      username: r.username,
-      state: r.disabled ? "disabled" : (r.pw_hash ? "active" : (r.invite_expires > nowSec() ? "invited" : "invite-expired")),
-      created_ts: r.created_ts, last_login: r.last_login, privileges,
-    };
+    const state = r.disabled ? "disabled" : (r.pw_hash ? "active" : (r.invite_expires > nowSec() ? "invited" : "invite-expired"));
+    const u = { username: r.username, state, created_ts: r.created_ts, last_login: r.last_login, privileges };
+    // For a pending invite, return the token + expiry so the master can recover the link.
+    if (state === "invited") { u.invite_token = r.invite_token; u.invite_expires = r.invite_expires; }
+    return u;
   });
   return json({ users }, 200, env);
 }

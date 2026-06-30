@@ -1801,7 +1801,7 @@ fn query_recent_events(conn: &Connection, limit: i64) -> Vec<serde_json::Value> 
 
 fn query_admin_users(conn: &Connection) -> Vec<serde_json::Value> {
     let Ok(mut stmt) = conn.prepare(
-        "SELECT username, pw_hash, invite_expires, disabled, created_ts, last_login, privileges FROM admins ORDER BY created_ts DESC",
+        "SELECT username, pw_hash, invite_expires, disabled, created_ts, last_login, privileges, invite_token FROM admins ORDER BY created_ts DESC",
     ) else {
         return vec![];
     };
@@ -1814,6 +1814,7 @@ fn query_admin_users(conn: &Connection) -> Vec<serde_json::Value> {
         let created_ts: i64 = r.get(4)?;
         let last_login: Option<i64> = r.get(5)?;
         let privileges_raw: Option<String> = r.get(6)?;
+        let invite_token: Option<String> = r.get(7)?;
         // The granted privilege set as a JSON array of strings (empty on NULL/parse error).
         let privileges: Vec<String> = privileges_raw
             .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
@@ -1827,13 +1828,21 @@ fn query_admin_users(conn: &Connection) -> Vec<serde_json::Value> {
         } else {
             "invite-expired"
         };
-        Ok(json!({
+        let mut obj = json!({
             "username": username,
             "state": state,
             "created_ts": created_ts,
             "last_login": last_login,
             "privileges": privileges,
-        }))
+        });
+        // For a pending invite, return the token + expiry so the master can recover the link.
+        if state == "invited" {
+            if let Some(m) = obj.as_object_mut() {
+                m.insert("invite_token".into(), json!(invite_token));
+                m.insert("invite_expires".into(), json!(invite_expires));
+            }
+        }
+        Ok(obj)
     });
     match it {
         Ok(rows) => rows.filter_map(|x| x.ok()).collect(),

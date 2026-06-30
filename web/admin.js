@@ -96,18 +96,21 @@ const privCell=u=>PRIVS.map(([k,lbl])=>`<label class="me-2 small" style="white-s
 async function renderUsers(){
   const r=await fetch(API+'/api/admin/users',{headers:{Authorization:'Bearer '+tok()}});
   if(!r.ok) return; const d=await r.json().catch(()=>({}));
-  $('users-body').innerHTML=(d.users||[]).map(u=>`<tr><td><code>${esc(u.username)}</code></td><td>${esc(u.state)}</td><td class="muted">${u.last_login?ago(u.last_login):'never'}</td><td>${privCell(u)}</td><td><a href="#" class="deluser text-danger small" data-u="${esc(u.username)}">remove</a></td></tr>`).join('') || '<tr><td colspan="5" class="muted small">No admin users yet — invite one above.</td></tr>';
+  $('users-body').innerHTML=(d.users||[]).map(u=>`<tr><td><code>${esc(u.username)}</code></td><td>${u.invite_token?`<a href="#" class="show-invite" data-u="${esc(u.username)}" data-t="${esc(u.invite_token)}" data-e="${u.invite_expires||0}" title="show the invite link again">invited</a>`:esc(u.state)}</td><td class="muted">${u.last_login?ago(u.last_login):'never'}</td><td>${privCell(u)}</td><td><a href="#" class="deluser text-danger small" data-u="${esc(u.username)}">remove</a></td></tr>`).join('') || '<tr><td colspan="5" class="muted small">No admin users yet — invite one above.</td></tr>';
+}
+function showInviteLink(username, token, expires){
+  const link=location.origin+location.pathname+'?invite='+token;
+  const mins=expires?Math.max(0,Math.round((expires-Math.floor(Date.now()/1000))/60)):60;
+  $('invite-link').innerHTML=`Invite for <code>${esc(username)}</code> (expires in ${mins} min) — send them this private link:<br><code style="word-break:break-all">${esc(link)}</code> <button class="btn btn-sm btn-outline-secondary ms-1" id="copy-invite">copy</button>`;
+  const cb=$('copy-invite'); if(cb) cb.onclick=()=>{ navigator.clipboard.writeText(link).then(()=>{cb.textContent='copied';}); };
 }
 async function invite(){
   const u=$('invite-user').value.trim().toLowerCase(); if(!u) return;
   $('invite-link').textContent='creating…';
   const r=await fetch(API+'/api/admin/users',{method:'POST',headers:{Authorization:'Bearer '+tok(),'content-type':'application/json'},body:JSON.stringify({username:u})});
   const d=await r.json().catch(()=>({}));
-  if(r.ok&&d.invite_token){ const link=location.origin+location.pathname+'?invite='+d.invite_token;
-    $('invite-link').innerHTML=`Invite for <code>${esc(d.username)}</code> (valid 60 min) — send them this private link:<br><code style="word-break:break-all">${esc(link)}</code> <button class="btn btn-sm btn-outline-secondary ms-1" id="copy-invite">copy</button>`;
-    $('invite-user').value=''; renderUsers();
-    const cb=$('copy-invite'); if(cb) cb.onclick=()=>{ navigator.clipboard.writeText(link).then(()=>{cb.textContent='copied';}); };
-  } else $('invite-link').innerHTML=`<span class="text-danger">${esc(d.error||'failed')}</span>`;
+  if(r.ok&&d.invite_token){ showInviteLink(d.username, d.invite_token, null); $('invite-user').value=''; renderUsers(); }
+  else $('invite-link').innerHTML=`<span class="text-danger">${esc(d.error||'failed')}</span>`;
 }
 async function startEnroll(token){
   $('gate').style.display='none'; $('app').style.display='none'; $('enroll').style.display='';
@@ -157,6 +160,9 @@ document.addEventListener('click',async ev=>{ const x=ev.target.closest('.deluse
   const u=x.dataset.u; if(!confirm('Remove admin "'+u+'"? They are signed out immediately.')) return;
   await fetch(API+'/api/admin/users/'+encodeURIComponent(u),{method:'DELETE',headers:{Authorization:'Bearer '+tok()}});
   renderUsers(); });
+// Click a pending "invited" admin to re-show its (still-valid) invite link.
+document.addEventListener('click',ev=>{ const x=ev.target.closest('.show-invite'); if(!x) return; ev.preventDefault();
+  showInviteLink(x.dataset.u, x.dataset.t, parseInt(x.dataset.e,10)||0); });
 // Toggle a per-admin privilege (master only): gather that user's checked boxes and save the set.
 document.addEventListener('change',async ev=>{ const x=ev.target.closest('.privbox'); if(!x) return;
   const u=x.dataset.u;
