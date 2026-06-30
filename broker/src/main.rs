@@ -266,13 +266,14 @@ fn bearer(headers: &HeaderMap) -> Option<&str> {
 
 /// Admin requests authenticate with a session token minted by /api/admin/login.
 /// Returns the session's admin identity ("master" for the break-glass token, else
-/// a username), or None when the token is missing/expired/unknown.
+/// a username), or None when the token is missing/expired/unknown. Fails closed on
+/// an empty stored identity so it can never be mistaken for "master" or any user.
 fn session_admin(headers: &HeaderMap, st: &AppState) -> Option<String> {
     let tok = bearer(headers)?;
     let now_ts = now();
     let mut s = st.sessions.lock();
     s.retain(|_, (_, exp)| *exp > now_ts);
-    s.get(tok).filter(|(_, exp)| *exp > now_ts).map(|(id, _)| id.clone())
+    s.get(tok).filter(|(id, exp)| *exp > now_ts && !id.is_empty()).map(|(id, _)| id.clone())
 }
 fn session_ok(headers: &HeaderMap, st: &AppState) -> bool {
     session_admin(headers, st).is_some()
@@ -372,6 +373,11 @@ fn new_totp_secret() -> String {
 }
 
 const PBKDF2_ITERS: u32 = 100_000;
+/// A syntactically valid but unmatchable PBKDF2 hash ("iters.saltB64.hashB64") with the
+/// same iteration count as real hashes. `verify_password` against it runs the full PBKDF2
+/// work and always fails — used on the absent/disabled/unenrolled login paths so response
+/// timing doesn't reveal whether a username exists (constant-time username enumeration guard).
+const DUMMY_PW_HASH: &str = "100000.AAAAAAAAAAAAAAAAAAAAAA==.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 fn pbkdf2_sha256(password: &[u8], salt: &[u8], iters: u32) -> [u8; 32] {
     use pbkdf2::pbkdf2_hmac;
     use sha2::Sha256;
@@ -405,6 +411,14 @@ fn verify_password(password: &str, stored: &str) -> bool {
 fn valid_username(s: &str) -> bool {
     let n = s.len();
     (3..=32).contains(&n)
+        && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '.' || c == '-')
+}
+
+/// `^[a-z0-9_.-]{1,32}$` — looser charset gating which (lowercased) login username is safe
+/// to record in the audit log, so arbitrary attacker text can't enter events.detail.
+fn safe_log_username(s: &str) -> bool {
+    let n = s.len();
+    (1..=32).contains(&n)
         && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '.' || c == '-')
 }
 
@@ -602,6 +616,7 @@ async fn main() -> anyhow::Result<()> {
         CREATE INDEX IF NOT EXISTS idx_state ON builds(state);
         CREATE INDEX IF NOT EXISTS idx_uid_created ON builds(uid, created_ts);
         CREATE INDEX IF NOT EXISTS idx_ip_created ON builds(ip_bucket, created_ts);
+        CREATE INDEX IF NOT EXISTS idx_builds_created ON builds(created_ts);
         CREATE TABLE IF NOT EXISTS events(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ts INTEGER NOT NULL,
@@ -613,6 +628,7 @@ async fn main() -> anyhow::Result<()> {
             detail TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
+        CREATE INDEX IF NOT EXISTS idx_events_kind_ip_ts ON events(kind, ip_bucket, ts);
         CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS admins(
             username TEXT PRIMARY KEY,
@@ -1026,15 +1042,25 @@ async fn admin_login(
             )
             .optional().ok().flatten()
         };
-        match row {
-            Some((Some(pw_hash), totp_secret, disabled))
-                if disabled == 0 && verify_password(&body.password, &pw_hash) && totp_check(&totp_secret, totp) =>
-            {
-                let conn = st.db.lock();
-                conn.execute("UPDATE admins SET last_login=?2 WHERE username=?1", rusqlite::params![u, now()]).ok();
-                Some(u)
-            }
-            _ => None,
+        // Always run the PBKDF2 verify exactly once — against the real hash for a usable
+        // (enrolled + enabled) account, else a fixed dummy — so a missing/disabled/unenrolled
+        // username costs the same as a wrong password and timing can't enumerate usernames.
+        let usable = matches!(&row, Some((Some(_), _, 0)));
+        let pw_hash = match &row {
+            Some((Some(h), _, 0)) => h.as_str(),
+            _ => DUMMY_PW_HASH,
+        };
+        let pw_ok = verify_password(&body.password, pw_hash);
+        let totp_ok = match &row {
+            Some((_, secret, _)) => totp_check(secret, totp),
+            None => false,
+        };
+        if usable && pw_ok && totp_ok {
+            let conn = st.db.lock();
+            conn.execute("UPDATE admins SET last_login=?2 WHERE username=?1", rusqlite::params![u, now()]).ok();
+            Some(u)
+        } else {
+            None
         }
     } else if let (Some(admin_token), Some(secret)) = (st.cfg.admin_token.as_deref(), st.cfg.admin_totp_secret.as_deref()) {
         // Master break-glass: token + master TOTP (env secrets, independent of the DB).
@@ -1050,7 +1076,16 @@ async fn admin_login(
     let Some(identity) = identity else {
         let conn = st.db.lock();
         let detail = match username {
-            Some(u) => format!("bad login ({})", u.to_lowercase()),
+            // Only record the username if it's in the safe charset; otherwise keep arbitrary
+            // attacker-supplied text out of events.detail.
+            Some(u) => {
+                let lu = u.to_lowercase();
+                if safe_log_username(&lu) {
+                    format!("bad login ({lu})")
+                } else {
+                    "bad login (invalid username)".to_string()
+                }
+            }
             None => "bad token or 2FA".to_string(),
         };
         log_event(&conn, "admin_login_fail", None, None, Some(&ip), &detail, Some(&ip_full));
@@ -1250,7 +1285,14 @@ async fn admin_clear_logs(State(st): State<AppState>, headers: HeaderMap) -> Res
         return json_err(StatusCode::UNAUTHORIZED, "admin auth required");
     }
     let conn = st.db.lock();
-    let cleared = conn.execute("DELETE FROM events", []).unwrap_or(0);
+    // Keep recent admin_login_fail rows (within the throttle window) so wiping the audit
+    // log can't be used to reset the per-IP brute-force throttle.
+    let cleared = conn
+        .execute(
+            "DELETE FROM events WHERE NOT (kind='admin_login_fail' AND ts > ?1)",
+            [now() - LOGIN_FAIL_WINDOW_SECS],
+        )
+        .unwrap_or(0);
     log_event(&conn, "admin_clear_logs", None, None, None, &format!("cleared {cleared} events"), None);
     drop(conn);
     Json(json!({ "ok": true, "cleared": cleared })).into_response()
@@ -1260,6 +1302,27 @@ async fn admin_clear_logs(State(st): State<AppState>, headers: HeaderMap) -> Res
 async fn admin_clear_builds(State(st): State<AppState>, headers: HeaderMap) -> Response {
     if !session_ok(&headers, &st) {
         return json_err(StatusCode::UNAUTHORIZED, "admin auth required");
+    }
+    // Reap the GitHub artifacts for done/failed rows before deleting them, so clearing the
+    // list doesn't orphan release assets / Actions runs (cancelled/expired already had theirs
+    // removed by the reaper). Collect the rows + drop the lock before any GitHub .await —
+    // never hold the DB mutex across an async call.
+    let reap: Vec<(String, Option<i64>, String)> = {
+        let conn = st.db.lock();
+        let Ok(mut stmt) = conn.prepare("SELECT id, run_id, state FROM builds WHERE state IN ('done','failed')") else {
+            return json_err(StatusCode::INTERNAL_SERVER_ERROR, "internal error");
+        };
+        stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<i64>>(1)?, r.get::<_, String>(2)?)))
+            .map(|it| it.filter_map(|x| x.ok()).collect())
+            .unwrap_or_default()
+    };
+    for (id, run_id, state) in reap {
+        if state == "done" {
+            let _ = delete_release_assets(&st, &id).await; // best-effort: ignore GitHub errors
+        }
+        if let Some(rid) = run_id {
+            let _ = delete_run(&st, rid).await; // best-effort: ignore GitHub errors
+        }
     }
     let conn = st.db.lock();
     let cleared = conn
@@ -1326,6 +1389,12 @@ async fn admin_invite(State(st): State<AppState>, headers: HeaderMap, Json(body)
         return e;
     }
     let u = body.username.to_lowercase().trim().to_string();
+    // "master" is the reserved break-glass identity — never let it be created as a named
+    // admin (the regex below would otherwise allow it). Empty/whitespace is rejected by
+    // valid_username (length < 3 after the trim above).
+    if u == "master" {
+        return json_err(StatusCode::BAD_REQUEST, "reserved username");
+    }
     if !valid_username(&u) {
         return json_err(StatusCode::BAD_REQUEST, "username must be 3-32 chars: a-z 0-9 . _ -");
     }
@@ -1822,6 +1891,13 @@ async fn scheduler_step(st: &AppState) -> anyhow::Result<()> {
                     let conn = st.db.lock();
                     conn.execute("UPDATE builds SET state=?2, finished_ts=?3 WHERE id=?1", rusqlite::params![id, new_state, now_ts]).ok();
                     log_event(&conn, new_state, Some(id), None, None, &format!("run {} {}", r.run_id, r.conclusion.as_deref().unwrap_or("?")), None);
+                } else if now_ts - dispatched_ts > lim.build_timeout {
+                    // Run is still listed but hasn't completed within the timeout: cancel it and
+                    // fail the build (don't hold the DB lock across the async cancel_run).
+                    let _ = cancel_run(st, r.run_id).await;
+                    let conn = st.db.lock();
+                    conn.execute("UPDATE builds SET state='failed', finished_ts=?2 WHERE id=?1", rusqlite::params![id, now_ts]).ok();
+                    log_event(&conn, "failed", Some(id), None, None, "timed out (run still running)", None);
                 }
             }
             None => {
