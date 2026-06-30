@@ -14,6 +14,9 @@
 
 const WINDOW = 3600;
 const DAY = 86400;
+// Per-admin privileged actions. Named admins are granted a subset; the master always
+// has all of them. Everything else in the admin panel stays open to any admin.
+const ADMIN_PRIVS = ["clear_logs", "clear_builds", "reset_limits"];
 
 const nowSec = () => Math.floor(Date.now() / 1000);
 const uuid = () => crypto.randomUUID();
@@ -615,6 +618,14 @@ async function sessionAdmin(request, env) {
   // sets identity="master" explicitly, so the master path is unaffected).
   return r && r.expires > t && r.admin ? r.admin : null;
 }
+// Does this admin identity hold a given privilege? The master always does (root); a
+// named admin only if it's in their granted set. Unknown user / bad JSON → false.
+async function adminCan(env, who, priv) {
+  if (who === "master") return true;
+  if (!who) return false;
+  const a = await env.DB.prepare("SELECT privileges FROM admins WHERE username=?").bind(who).first();
+  try { return !!(a && a.privileges) && JSON.parse(a.privileges).includes(priv); } catch { return false; }
+}
 
 async function handleAdminLogin(request, env) {
   let body;
@@ -682,12 +693,16 @@ async function handleAdminInvite(request, env) {
 }
 async function handleAdminListUsers(request, env) {
   if ((await sessionAdmin(request, env)) !== "master") return json({ error: "master token required" }, 403, env);
-  const rows = (await env.DB.prepare("SELECT username,pw_hash,invite_expires,disabled,created_ts,last_login FROM admins ORDER BY created_ts DESC").all()).results || [];
-  const users = rows.map((r) => ({
-    username: r.username,
-    state: r.disabled ? "disabled" : (r.pw_hash ? "active" : (r.invite_expires > nowSec() ? "invited" : "invite-expired")),
-    created_ts: r.created_ts, last_login: r.last_login,
-  }));
+  const rows = (await env.DB.prepare("SELECT username,pw_hash,invite_expires,disabled,created_ts,last_login,privileges FROM admins ORDER BY created_ts DESC").all()).results || [];
+  const users = rows.map((r) => {
+    let privileges = [];
+    try { if (r.privileges) privileges = JSON.parse(r.privileges); } catch { privileges = []; }
+    return {
+      username: r.username,
+      state: r.disabled ? "disabled" : (r.pw_hash ? "active" : (r.invite_expires > nowSec() ? "invited" : "invite-expired")),
+      created_ts: r.created_ts, last_login: r.last_login, privileges,
+    };
+  });
   return json({ users }, 200, env);
 }
 async function handleAdminDeleteUser(username, request, env) {
@@ -706,6 +721,17 @@ async function handleAdminDisableUser(username, request, env) {
   if (dis) await env.DB.prepare("DELETE FROM sessions WHERE admin=?").bind(u).run();
   await logEvent(env, "admin_user_disabled", null, null, null, `${dis ? "disabled" : "enabled"} ${u}`);
   return json({ ok: true }, 200, env);
+}
+// Replace a named admin's granted privilege set (master only). Unknown names are dropped
+// and dupes collapsed; an empty/missing array clears all privileges.
+async function handleAdminSetPrivileges(username, request, env) {
+  if ((await sessionAdmin(request, env)) !== "master") return json({ error: "master token required" }, 403, env);
+  let body; try { body = await request.json(); } catch { return json({ error: "bad request" }, 400, env); }
+  const privs = Array.isArray(body.privileges) ? [...new Set(body.privileges.filter((p) => ADMIN_PRIVS.includes(p)))] : [];
+  const r = await env.DB.prepare("UPDATE admins SET privileges=? WHERE username=?").bind(JSON.stringify(privs), String(username).toLowerCase()).run();
+  if ((r.meta?.changes ?? 0) === 0) return json({ error: "unknown user" }, 404, env);
+  await logEvent(env, "admin_privileges", null, null, null, `${String(username).toLowerCase()}: [${privs.join(",")}]`);
+  return json({ ok: true, username: String(username).toLowerCase(), privileges: privs }, 200, env);
 }
 // Invite enrollment (no session — the invitee isn't an admin yet).
 const inviteOtpauth = (username, secret) => {
@@ -775,7 +801,9 @@ async function handleAdminToggle(request, env) {
   return json({ builds_enabled: !!body.enabled }, 200, env);
 }
 async function handleAdminClearLogs(request, env) {
-  if (!(await sessionAdmin(request, env))) return json({ error: "admin auth required" }, 401, env);
+  const who = await sessionAdmin(request, env);
+  if (!who) return json({ error: "admin auth required" }, 401, env);
+  if (!(await adminCan(env, who, "clear_logs"))) return json({ error: "not permitted" }, 403, env);
   // Preserve recent admin_login_fail rows (the 15-min window) so clearing logs can't
   // wipe the per-IP brute-force throttle that counts them.
   const r = await env.DB.prepare("DELETE FROM events WHERE NOT (kind='admin_login_fail' AND ts > ?)").bind(nowSec() - 900).run();
@@ -785,7 +813,9 @@ async function handleAdminClearLogs(request, env) {
 }
 // Delete finished builds (done/failed/cancelled/expired) from the list; never queued/running.
 async function handleAdminClearBuilds(request, env) {
-  if (!(await sessionAdmin(request, env))) return json({ error: "admin auth required" }, 401, env);
+  const who = await sessionAdmin(request, env);
+  if (!who) return json({ error: "admin auth required" }, 401, env);
+  if (!(await adminCan(env, who, "clear_builds"))) return json({ error: "not permitted" }, 403, env);
   // Reap GitHub artifacts/runs for done/failed rows before deleting them (cancelled/expired
   // already had theirs removed by cancel or the reaper). Best-effort.
   const reap = ((await env.DB.prepare("SELECT id,run_id,state FROM builds WHERE state IN ('done','failed')").all()).results) || [];
@@ -801,7 +831,9 @@ async function handleAdminClearBuilds(request, env) {
   return json({ ok: true, cleared: n }, 200, env);
 }
 async function handleAdminResetLimits(request, env) {
-  if (!(await sessionAdmin(request, env))) return json({ error: "admin auth required" }, 401, env);
+  const who = await sessionAdmin(request, env);
+  if (!who) return json({ error: "admin auth required" }, 401, env);
+  if (!(await adminCan(env, who, "reset_limits"))) return json({ error: "not permitted" }, 403, env);
   // Mark "now" so the rate-limit queries ignore every build created before this.
   await setSetting(env, "limits_reset_ts", String(nowSec()));
   await logEvent(env, "admin_reset_limits", null, null, null, "hourly limits reset");
@@ -866,6 +898,7 @@ export default {
       if (p === "/api/admin/users" && request.method === "POST") return await handleAdminInvite(request, env);
       if (p === "/api/admin/users" && request.method === "GET") return await handleAdminListUsers(request, env);
       if ((m = p.match(/^\/api\/admin\/users\/([^/]+)\/disable$/)) && request.method === "POST") return await handleAdminDisableUser(m[1], request, env);
+      if ((m = p.match(/^\/api\/admin\/users\/([^/]+)\/privileges$/)) && request.method === "POST") return await handleAdminSetPrivileges(m[1], request, env);
       if ((m = p.match(/^\/api\/admin\/users\/([^/]+)$/)) && request.method === "DELETE") return await handleAdminDeleteUser(m[1], request, env);
       if ((m = p.match(/^\/api\/admin\/invite\/([^/]+)$/)) && request.method === "GET") return await handleGetInvite(m[1], env);
       if (p === "/api/admin/accept-invite" && request.method === "POST") return await handleAcceptInvite(request, env);

@@ -95,7 +95,7 @@
     </div>
     <div id="invite-link" class="small mb-2"></div>
     <div class="table-responsive"><table class="table table-sm align-middle mb-0">
-      <thead><tr><th>username</th><th>state</th><th>last login</th><th></th></tr></thead>
+      <thead><tr><th>username</th><th>state</th><th>last login</th><th>privileges</th><th></th></tr></thead>
       <tbody id="users-body"></tbody>
     </table></div>
   </div></div>
@@ -236,10 +236,12 @@ async function doUpdate(){
 
 // --- admin user management (master only) + invite enrollment ---
 let usersShown=false;
+const PRIVS=[['clear_logs','clear logs'],['clear_builds','clear builds'],['reset_limits','reset limits']];
+const privCell=u=>PRIVS.map(([k,lbl])=>`<label class="me-2 small" style="white-space:nowrap"><input type="checkbox" class="privbox" data-u="${esc(u.username)}" data-p="${k}" ${(u.privileges||[]).includes(k)?'checked':''}> ${lbl}</label>`).join('');
 async function renderUsers(){
   const r=await fetch(API+'/api/admin/users',{headers:{Authorization:'Bearer '+tok()}});
   if(!r.ok) return; const d=await r.json().catch(()=>({}));
-  $('users-body').innerHTML=(d.users||[]).map(u=>`<tr><td><code>${esc(u.username)}</code></td><td>${esc(u.state)}</td><td class="muted">${u.last_login?ago(u.last_login):'never'}</td><td><a href="#" class="deluser text-danger small" data-u="${esc(u.username)}">remove</a></td></tr>`).join('') || '<tr><td colspan="4" class="muted small">No admin users yet — invite one above.</td></tr>';
+  $('users-body').innerHTML=(d.users||[]).map(u=>`<tr><td><code>${esc(u.username)}</code></td><td>${esc(u.state)}</td><td class="muted">${u.last_login?ago(u.last_login):'never'}</td><td>${privCell(u)}</td><td><a href="#" class="deluser text-danger small" data-u="${esc(u.username)}">remove</a></td></tr>`).join('') || '<tr><td colspan="5" class="muted small">No admin users yet — invite one above.</td></tr>';
 }
 async function invite(){
   const u=$('invite-user').value.trim().toLowerCase(); if(!u) return;
@@ -299,6 +301,12 @@ document.addEventListener('click',async ev=>{ const x=ev.target.closest('.bact')
 document.addEventListener('click',async ev=>{ const x=ev.target.closest('.deluser'); if(!x) return; ev.preventDefault();
   const u=x.dataset.u; if(!confirm('Remove admin "'+u+'"? They are signed out immediately.')) return;
   await fetch(API+'/api/admin/users/'+encodeURIComponent(u),{method:'DELETE',headers:{Authorization:'Bearer '+tok()}});
+  renderUsers(); });
+// Toggle a per-admin privilege (master only): gather that user's checked boxes and save the set.
+document.addEventListener('change',async ev=>{ const x=ev.target.closest('.privbox'); if(!x) return;
+  const u=x.dataset.u;
+  const privileges=[...document.querySelectorAll('.privbox')].filter(b=>b.dataset.u===u&&b.checked).map(b=>b.dataset.p);
+  await fetch(API+'/api/admin/users/'+encodeURIComponent(u)+'/privileges',{method:'POST',headers:{Authorization:'Bearer '+tok(),'content-type':'application/json'},body:JSON.stringify({privileges})});
   renderUsers(); });
 const inviteParam=new URLSearchParams(location.search).get('invite');
 if(inviteParam){ startEnroll(inviteParam); }
