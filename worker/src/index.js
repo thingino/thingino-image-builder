@@ -290,7 +290,7 @@ async function handleCancel(id, request, env) {
   return json({ state: await doCancel(env, b, id, uid) }, 200, env);
 }
 async function handleAdminCancel(id, request, env) {
-  if (!(await sessionOk(request, env))) return json({ error: "admin auth required" }, 401, env);
+  if (!(await sessionAdmin(request, env))) return json({ error: "admin auth required" }, 401, env);
   if (!validBuildId(id)) return json({ error: "bad build_id" }, 400, env);
   const b = await env.DB.prepare("SELECT uid,state,run_id FROM builds WHERE id=?").bind(id).first();
   if (!b) return json({ error: "unknown build" }, 404, env);
@@ -299,7 +299,7 @@ async function handleAdminCancel(id, request, env) {
 }
 // Admin: remove a finished build's artifact + Actions run early (the reaper's job, on demand).
 async function handleAdminExpire(id, request, env) {
-  if (!(await sessionOk(request, env))) return json({ error: "admin auth required" }, 401, env);
+  if (!(await sessionAdmin(request, env))) return json({ error: "admin auth required" }, 401, env);
   if (!validBuildId(id)) return json({ error: "bad build_id" }, 400, env);
   const b = await env.DB.prepare("SELECT uid,state,run_id FROM builds WHERE id=?").bind(id).first();
   if (!b) return json({ error: "unknown build" }, 404, env);
@@ -474,17 +474,47 @@ async function totpCheck(secretB32, code) {
   for (const c of [step - 1, step, step + 1]) if ((await hotp(secret, c)) === want) return true;
   return false;
 }
+// --- account helpers: randomness, base32 encode, base64, PBKDF2 password hashing ---
+const randBytes = (n) => crypto.getRandomValues(new Uint8Array(n));
+const randToken = () => [...randBytes(24)].map((b) => b.toString(16).padStart(2, "0")).join("");
+function base32Encode(bytes) {
+  const A = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  let bits = 0, val = 0, out = "";
+  for (const b of bytes) { val = (val << 8) | b; bits += 8; while (bits >= 5) { bits -= 5; out += A[(val >> bits) & 31]; } }
+  if (bits > 0) out += A[(val << (5 - bits)) & 31];
+  return out;
+}
+const newTotpSecret = () => base32Encode(randBytes(20));
+const bytesToB64 = (u8) => btoa(String.fromCharCode(...u8));
+const b64ToBytes = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+const PBKDF2_ITERS = 100000;
+async function pbkdf2(password, salt, iters) {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
+  return new Uint8Array(await crypto.subtle.deriveBits({ name: "PBKDF2", salt, iterations: iters, hash: "SHA-256" }, key, 256));
+}
+// Stored as "iters.saltB64.hashB64" so the work factor can change without breaking old hashes.
+async function hashPassword(password) {
+  const salt = randBytes(16);
+  return `${PBKDF2_ITERS}.${bytesToB64(salt)}.${bytesToB64(await pbkdf2(password, salt, PBKDF2_ITERS))}`;
+}
+async function verifyPassword(password, stored) {
+  if (!stored) return false;
+  const [iters, saltB64, hashB64] = stored.split(".");
+  if (!iters || !saltB64 || !hashB64) return false;
+  return ctEq(bytesToB64(await pbkdf2(password, b64ToBytes(saltB64), parseInt(iters, 10))), hashB64);
+}
 const bearer = (request) => {
   const a = request.headers.get("authorization") || "";
   return a.startsWith("Bearer ") ? a.slice(7) : "";
 };
-async function sessionOk(request, env) {
+// Returns the session's admin identity ("master" or a username), or null.
+async function sessionAdmin(request, env) {
   const tok = bearer(request);
-  if (!tok) return false;
+  if (!tok) return null;
   const t = nowSec();
   await env.DB.prepare("DELETE FROM sessions WHERE expires <= ?").bind(t).run();
-  const r = await env.DB.prepare("SELECT expires FROM sessions WHERE token=?").bind(tok).first();
-  return !!(r && r.expires > t);
+  const r = await env.DB.prepare("SELECT admin,expires FROM sessions WHERE token=?").bind(tok).first();
+  return r && r.expires > t ? (r.admin || "master") : null;
 }
 
 async function handleAdminLogin(request, env) {
@@ -497,25 +527,106 @@ async function handleAdminLogin(request, env) {
     await logEvent(env, "admin_login_throttled", null, null, ip, "too many failed logins", rawIp);
     return json({ error: "too many attempts — try again later" }, 429, env);
   }
-  if (!env.ADMIN_TOKEN) return json({ error: "admin is disabled" }, 503, env);
-  if (!env.ADMIN_TOTP_SECRET) return json({ error: "admin 2FA is not configured" }, 503, env);
-  const ok = ctEq(String(body.token || ""), env.ADMIN_TOKEN) && (await totpCheck(env.ADMIN_TOTP_SECRET, String(body.totp || "").trim()));
-  if (!ok) {
-    await logEvent(env, "admin_login_fail", null, null, ip, "bad token or 2FA", rawIp);
+  const totp = String(body.totp || "").trim();
+  let identity = null;
+  if (body.username) {
+    // Named admin: username + password + their own TOTP (all enforced).
+    const u = String(body.username).toLowerCase();
+    const a = await env.DB.prepare("SELECT pw_hash,totp_secret,disabled FROM admins WHERE username=?").bind(u).first();
+    if (a && !a.disabled && a.pw_hash
+        && (await verifyPassword(String(body.password || ""), a.pw_hash))
+        && (await totpCheck(a.totp_secret, totp))) {
+      identity = u;
+      await env.DB.prepare("UPDATE admins SET last_login=? WHERE username=?").bind(nowSec(), u).run();
+    }
+  } else if (env.ADMIN_TOKEN && env.ADMIN_TOTP_SECRET) {
+    // Master break-glass: token + master TOTP (a Worker secret, independent of D1).
+    if (ctEq(String(body.token || ""), env.ADMIN_TOKEN) && (await totpCheck(env.ADMIN_TOTP_SECRET, totp))) identity = "master";
+  }
+  if (!identity) {
+    await logEvent(env, "admin_login_fail", null, null, ip, body.username ? `bad login (${String(body.username).toLowerCase()})` : "bad token or 2FA", rawIp);
     return json({ error: "invalid credentials" }, 401, env);
   }
   const session = uuid(), ttl = 8 * 3600;
-  await env.DB.prepare("INSERT INTO sessions(token,expires) VALUES(?,?)").bind(session, nowSec() + ttl).run();
-  await logEvent(env, "admin_login_ok", null, null, ip, "session created", rawIp);
-  return json({ session, expires_in: ttl, totp: true }, 200, env);
+  await env.DB.prepare("INSERT INTO sessions(token,admin,expires) VALUES(?,?,?)").bind(session, identity, nowSec() + ttl).run();
+  await logEvent(env, "admin_login_ok", null, null, ip, `session created (${identity})`, rawIp);
+  return json({ session, expires_in: ttl, admin: identity, master: identity === "master" }, 200, env);
 }
 async function handleAdminLogout(request, env) {
   const tok = bearer(request);
   if (tok) await env.DB.prepare("DELETE FROM sessions WHERE token=?").bind(tok).run();
   return json({ ok: true }, 200, env);
 }
+
+// --- Admin user management (master token only) + invite self-enrollment ----
+async function handleAdminInvite(request, env) {
+  if ((await sessionAdmin(request, env)) !== "master") return json({ error: "master token required" }, 403, env);
+  let body; try { body = await request.json(); } catch { return json({ error: "bad request" }, 400, env); }
+  const u = String(body.username || "").toLowerCase().trim();
+  if (!/^[a-z0-9_.-]{3,32}$/.test(u)) return json({ error: "username must be 3-32 chars: a-z 0-9 . _ -" }, 400, env);
+  if (await env.DB.prepare("SELECT username FROM admins WHERE username=?").bind(u).first())
+    return json({ error: "that username already exists" }, 409, env);
+  const token = randToken(), secret = newTotpSecret(), exp = nowSec() + 48 * 3600;
+  await env.DB.prepare("INSERT INTO admins(username,totp_secret,invite_token,invite_expires,created_ts,created_by) VALUES(?,?,?,?,?,?)")
+    .bind(u, secret, token, exp, nowSec(), "master").run();
+  await logEvent(env, "admin_user_invited", null, null, null, `invited ${u}`);
+  return json({ ok: true, username: u, invite_token: token, expires_in: 48 * 3600 }, 200, env);
+}
+async function handleAdminListUsers(request, env) {
+  if ((await sessionAdmin(request, env)) !== "master") return json({ error: "master token required" }, 403, env);
+  const rows = (await env.DB.prepare("SELECT username,pw_hash,invite_expires,disabled,created_ts,last_login FROM admins ORDER BY created_ts DESC").all()).results || [];
+  const users = rows.map((r) => ({
+    username: r.username,
+    state: r.disabled ? "disabled" : (r.pw_hash ? "active" : (r.invite_expires > nowSec() ? "invited" : "invite-expired")),
+    created_ts: r.created_ts, last_login: r.last_login,
+  }));
+  return json({ users }, 200, env);
+}
+async function handleAdminDeleteUser(username, request, env) {
+  if ((await sessionAdmin(request, env)) !== "master") return json({ error: "master token required" }, 403, env);
+  const u = String(username).toLowerCase();
+  const r = await env.DB.prepare("DELETE FROM admins WHERE username=?").bind(u).run();
+  await env.DB.prepare("DELETE FROM sessions WHERE admin=?").bind(u).run();
+  await logEvent(env, "admin_user_deleted", null, null, null, `deleted ${u}`);
+  return json({ ok: true, deleted: r.meta?.changes ?? 0 }, 200, env);
+}
+async function handleAdminDisableUser(username, request, env) {
+  if ((await sessionAdmin(request, env)) !== "master") return json({ error: "master token required" }, 403, env);
+  let body; try { body = await request.json(); } catch { body = {}; }
+  const u = String(username).toLowerCase(), dis = body.disabled ? 1 : 0;
+  await env.DB.prepare("UPDATE admins SET disabled=? WHERE username=?").bind(dis, u).run();
+  if (dis) await env.DB.prepare("DELETE FROM sessions WHERE admin=?").bind(u).run();
+  await logEvent(env, "admin_user_disabled", null, null, null, `${dis ? "disabled" : "enabled"} ${u}`);
+  return json({ ok: true }, 200, env);
+}
+// Invite enrollment (no session — the invitee isn't an admin yet).
+const inviteOtpauth = (username, secret) => {
+  const issuer = "thingino web-builder";
+  return `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(username)}?secret=${secret}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`;
+};
+async function handleGetInvite(token, env) {
+  const a = await env.DB.prepare("SELECT username,totp_secret,invite_expires,pw_hash FROM admins WHERE invite_token=?").bind(token).first();
+  if (!a || a.pw_hash) return json({ error: "invalid or already-used invite" }, 404, env);
+  if (a.invite_expires <= nowSec()) return json({ error: "this invite has expired" }, 410, env);
+  return json({ username: a.username, secret: a.totp_secret, otpauth: inviteOtpauth(a.username, a.totp_secret) }, 200, env);
+}
+async function handleAcceptInvite(request, env) {
+  let body; try { body = await request.json(); } catch { return json({ error: "bad request" }, 400, env); }
+  const a = await env.DB.prepare("SELECT username,totp_secret,invite_expires,pw_hash FROM admins WHERE invite_token=?").bind(String(body.token || "")).first();
+  if (!a || a.pw_hash) return json({ error: "invalid or already-used invite" }, 404, env);
+  if (a.invite_expires <= nowSec()) return json({ error: "this invite has expired" }, 410, env);
+  const pw = String(body.password || "");
+  if (pw.length < 10) return json({ error: "password must be at least 10 characters" }, 400, env);
+  if (!(await totpCheck(a.totp_secret, String(body.totp || "").trim())))
+    return json({ error: "that 2FA code doesn't match — re-scan and try the next code" }, 401, env);
+  await env.DB.prepare("UPDATE admins SET pw_hash=?, invite_token=NULL, invite_expires=NULL WHERE username=?")
+    .bind(await hashPassword(pw), a.username).run();
+  await logEvent(env, "admin_user_enrolled", null, null, null, `${a.username} enrolled`);
+  return json({ ok: true, username: a.username }, 200, env);
+}
 async function handleAdminStats(request, env) {
-  if (!(await sessionOk(request, env))) return json({ error: "admin auth required" }, 401, env);
+  const me = await sessionAdmin(request, env);
+  if (!me) return json({ error: "admin auth required" }, 401, env);
   const cfg = await limits(env);
   const counts = {};
   for (const s of ["queued", "running", "done", "failed", "cancelled", "expired"])
@@ -544,10 +655,11 @@ async function handleAdminStats(request, env) {
     },
     recent_builds: builds, recent_events: events,
     version: env.VERSION || "v0.1.0", latest_version: null, update_available: false,
+    me, master: me === "master",
   }, 200, env);
 }
 async function handleAdminToggle(request, env) {
-  if (!(await sessionOk(request, env))) return json({ error: "admin auth required" }, 401, env);
+  if (!(await sessionAdmin(request, env))) return json({ error: "admin auth required" }, 401, env);
   let body;
   try { body = await request.json(); } catch { return json({ error: "bad request" }, 400, env); }
   await setSetting(env, "builds_enabled", body.enabled ? "1" : "0");
@@ -555,14 +667,14 @@ async function handleAdminToggle(request, env) {
   return json({ builds_enabled: !!body.enabled }, 200, env);
 }
 async function handleAdminClearLogs(request, env) {
-  if (!(await sessionOk(request, env))) return json({ error: "admin auth required" }, 401, env);
+  if (!(await sessionAdmin(request, env))) return json({ error: "admin auth required" }, 401, env);
   const r = await env.DB.prepare("DELETE FROM events").run();
   const n = r.meta?.changes ?? 0;
   await logEvent(env, "admin_clear_logs", null, null, null, `cleared ${n} events`);
   return json({ ok: true, cleared: n }, 200, env);
 }
 async function handleAdminResetLimits(request, env) {
-  if (!(await sessionOk(request, env))) return json({ error: "admin auth required" }, 401, env);
+  if (!(await sessionAdmin(request, env))) return json({ error: "admin auth required" }, 401, env);
   // Mark "now" so the rate-limit queries ignore every build created before this.
   await setSetting(env, "limits_reset_ts", String(nowSec()));
   await logEvent(env, "admin_reset_limits", null, null, null, "hourly limits reset");
@@ -570,7 +682,7 @@ async function handleAdminResetLimits(request, env) {
 }
 // Set runtime limit overrides (stored in D1; layered over the wrangler.toml vars).
 async function handleAdminLimits(request, env) {
-  if (!(await sessionOk(request, env))) return json({ error: "admin auth required" }, 401, env);
+  if (!(await sessionAdmin(request, env))) return json({ error: "admin auth required" }, 401, env);
   let body;
   try { body = await request.json(); } catch { return json({ error: "bad request" }, 400, env); }
   const cur = await limits(env);
@@ -605,6 +717,12 @@ export default {
       if (p === "/api/admin/clear-logs" && request.method === "POST") return await handleAdminClearLogs(request, env);
       if (p === "/api/admin/reset-limits" && request.method === "POST") return await handleAdminResetLimits(request, env);
       if (p === "/api/admin/limits" && request.method === "POST") return await handleAdminLimits(request, env);
+      if (p === "/api/admin/users" && request.method === "POST") return await handleAdminInvite(request, env);
+      if (p === "/api/admin/users" && request.method === "GET") return await handleAdminListUsers(request, env);
+      if ((m = p.match(/^\/api\/admin\/users\/([^/]+)\/disable$/)) && request.method === "POST") return await handleAdminDisableUser(m[1], request, env);
+      if ((m = p.match(/^\/api\/admin\/users\/([^/]+)$/)) && request.method === "DELETE") return await handleAdminDeleteUser(m[1], request, env);
+      if ((m = p.match(/^\/api\/admin\/invite\/([^/]+)$/)) && request.method === "GET") return await handleGetInvite(m[1], env);
+      if (p === "/api/admin/accept-invite" && request.method === "POST") return await handleAcceptInvite(request, env);
       if (p === "/api/admin/logout" && request.method === "POST") return await handleAdminLogout(request, env);
       return json({ error: "not found" }, 404, env);
     } catch (e) {

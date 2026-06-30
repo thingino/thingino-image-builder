@@ -28,11 +28,33 @@
   <div class="card">
     <div class="card-header"><h2 class="card-title mb-0 fs-5"><i class="bi bi-shield-lock me-1"></i> Admin</h2></div>
     <div class="card-body">
-      <p class="small muted">Enter the admin token and your 6-digit authenticator code.</p>
-      <input id="token" type="password" class="form-control mb-2" placeholder="Admin token" autocomplete="off">
+      <p class="small muted" id="gate-hint">Sign in with your admin username, password, and 6-digit code.</p>
+      <input id="username" class="form-control mb-2" placeholder="Username" autocomplete="username">
+      <input id="password" type="password" class="form-control mb-2" placeholder="Password" autocomplete="current-password">
+      <input id="token" type="password" class="form-control mb-2" placeholder="Master token" autocomplete="off" style="display:none">
       <input id="totp" type="text" class="form-control mb-2" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="6-digit code" autocomplete="off" required>
       <button id="login" class="btn btn-thingino w-100">Sign in</button>
       <div class="text-danger small mt-2" id="gate-err"></div>
+      <a href="#" id="master-toggle" class="small muted d-block mt-2">Use master token instead</a>
+    </div>
+  </div>
+</div>
+
+<div id="enroll" style="display:none;max-width:440px;margin:6vh auto 0;">
+  <div class="card">
+    <div class="card-header"><h2 class="card-title mb-0 fs-5"><i class="bi bi-person-plus me-1"></i> Set up your admin account</h2></div>
+    <div class="card-body">
+      <p class="small muted mb-2">Account: <code id="enroll-user">…</code></p>
+      <p class="small mb-1"><strong>1.</strong> Scan with your authenticator app (Google Authenticator, Authy, …):</p>
+      <div id="enroll-qr" class="my-2 p-2 bg-white rounded mx-auto" style="width:fit-content"></div>
+      <p class="small muted">…or enter this key manually: <code id="enroll-secret" style="word-break:break-all"></code></p>
+      <hr>
+      <p class="small mb-1"><strong>2.</strong> Set a password (min 10 chars) and enter a 6-digit code to confirm:</p>
+      <input id="enroll-pw" type="password" class="form-control mb-2" placeholder="New password" autocomplete="new-password">
+      <input id="enroll-pw2" type="password" class="form-control mb-2" placeholder="Confirm password" autocomplete="new-password">
+      <input id="enroll-totp" type="text" class="form-control mb-2" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="6-digit code" autocomplete="off">
+      <button id="enroll-btn" class="btn btn-thingino w-100">Set up account</button>
+      <div class="small mt-2" id="enroll-msg"></div>
     </div>
   </div>
 </div>
@@ -56,6 +78,21 @@
     <div>Version <code id="ver">…</code> <span id="upd-badge"></span></div>
     <button id="upd-btn" class="btn btn-sm btn-thingino" style="display:none">Update now</button>
     <span class="small muted ms-auto" id="upd-extra"></span>
+  </div></div>
+
+  <div class="card mb-3" id="users-card" style="display:none"><div class="card-body">
+    <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
+      <span class="small muted text-uppercase">Admin users</span>
+      <div class="input-group input-group-sm ms-auto" style="max-width:340px">
+        <input id="invite-user" class="form-control" placeholder="new username">
+        <button id="invite-btn" class="btn btn-thingino">Invite</button>
+      </div>
+    </div>
+    <div id="invite-link" class="small mb-2"></div>
+    <div class="table-responsive"><table class="table table-sm align-middle mb-0">
+      <thead><tr><th>username</th><th>state</th><th>last login</th><th></th></tr></thead>
+      <tbody id="users-body"></tbody>
+    </table></div>
   </div></div>
 
   <div class="card mb-3"><div class="card-body">
@@ -99,6 +136,7 @@
 </div>
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
+<script src="vendor/qrcode.min.js"></script>
 <script src="config.js"></script>
 <script>
 const API = window.API_BASE || '';
@@ -121,9 +159,17 @@ const pill=s=>`<span class="badge ${PILL[s]||'bg-secondary'}">${s}</span>`;
 const tile=(l,n)=>`<div class="col-6 col-md-3 col-lg-2"><div class="card text-center h-100"><div class="card-body py-2 px-1"><div class="fs-4 fw-bold">${n??0}</div><div class="small muted text-uppercase">${l}</div></div></div></div>`;
 
 async function adminGet(){ const r=await fetch(API+'/api/admin/stats',{headers:{Authorization:'Bearer '+tok()}}); if(r.status===401) throw 0; return r.json(); }
+let masterMode=false;
+function setMaster(on){ masterMode=on;
+  $('username').style.display=on?'none':''; $('password').style.display=on?'none':''; $('token').style.display=on?'':'none';
+  $('master-toggle').textContent=on?'Use username + password instead':'Use master token instead';
+  $('gate-hint').textContent=on?'Break-glass: enter the master token and the master 6-digit code.':'Sign in with your admin username, password, and 6-digit code.';
+}
 async function login(){
   $('gate-err').textContent='';
-  const r=await fetch(API+'/api/admin/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({token:$('token').value.trim(),totp:$('totp').value.trim()})});
+  const body=masterMode?{token:$('token').value.trim(),totp:$('totp').value.trim()}
+    :{username:$('username').value.trim().toLowerCase(),password:$('password').value,totp:$('totp').value.trim()};
+  const r=await fetch(API+'/api/admin/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
   const d=await r.json().catch(()=>({}));
   if(r.ok&&d.session){ sessionStorage.setItem(TK,d.session); show(); }
   else { $('gate-err').textContent=d.error||'Invalid credentials.'; sessionStorage.removeItem(TK); }
@@ -147,6 +193,7 @@ async function refresh(){
     $('upd-btn').style.display='none';
   }
   renderLimits(d.limits, d.usage);
+  if(d.master){ if(!usersShown){ $('users-card').style.display=''; usersShown=true; renderUsers(); } } else $('users-card').style.display='none';
   const c=d.counts||{};
   $('tiles').innerHTML=[['running',c.running],['queued',c.queued],['done',c.done],['failed',c.failed],['cancelled',c.cancelled],['expired',c.expired],['24h',d.last24h],['avg build',d.avg_build_secs?Math.round(d.avg_build_secs/60)+'m':'—']].map(([l,n])=>tile(l,n)).join('');
   $('builds-body').innerHTML=(d.recent_builds||[]).map(b=>`<tr><td><code>${esc(short(b.build_id))}</code></td><td>${esc(b.defconfig)}</td><td>${pill(b.state)}${buildAction(b)}</td><td><code>${esc(short(b.uid))}</code></td><td>${ipcell(b.ip,b.ip_bucket)}</td><td>${ago(b.created_ts)}</td><td>${dur(b.dispatched_ts,b.finished_ts)}</td><td><code>${esc(b.run_id)}</code></td></tr>`).join('');
@@ -181,7 +228,48 @@ async function doUpdate(){
   $('upd-btn').disabled=false;
 }
 
+// --- admin user management (master only) + invite enrollment ---
+let usersShown=false;
+async function renderUsers(){
+  const r=await fetch(API+'/api/admin/users',{headers:{Authorization:'Bearer '+tok()}});
+  if(!r.ok) return; const d=await r.json().catch(()=>({}));
+  $('users-body').innerHTML=(d.users||[]).map(u=>`<tr><td><code>${esc(u.username)}</code></td><td>${esc(u.state)}</td><td class="muted">${u.last_login?ago(u.last_login):'never'}</td><td><a href="#" class="deluser text-danger small" data-u="${esc(u.username)}">remove</a></td></tr>`).join('') || '<tr><td colspan="4" class="muted small">No admin users yet — invite one above.</td></tr>';
+}
+async function invite(){
+  const u=$('invite-user').value.trim().toLowerCase(); if(!u) return;
+  $('invite-link').textContent='creating…';
+  const r=await fetch(API+'/api/admin/users',{method:'POST',headers:{Authorization:'Bearer '+tok(),'content-type':'application/json'},body:JSON.stringify({username:u})});
+  const d=await r.json().catch(()=>({}));
+  if(r.ok&&d.invite_token){ const link=location.origin+location.pathname+'?invite='+d.invite_token;
+    $('invite-link').innerHTML=`Invite for <code>${esc(d.username)}</code> (valid 48h) — send them this private link:<br><code style="word-break:break-all">${esc(link)}</code> <button class="btn btn-sm btn-outline-secondary ms-1" id="copy-invite">copy</button>`;
+    $('invite-user').value=''; renderUsers();
+    const cb=$('copy-invite'); if(cb) cb.onclick=()=>{ navigator.clipboard.writeText(link).then(()=>{cb.textContent='copied';}); };
+  } else $('invite-link').innerHTML=`<span class="text-danger">${esc(d.error||'failed')}</span>`;
+}
+async function startEnroll(token){
+  $('gate').style.display='none'; $('app').style.display='none'; $('enroll').style.display='';
+  const r=await fetch(API+'/api/admin/invite/'+encodeURIComponent(token));
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok){ $('enroll-msg').className='text-danger small mt-2'; $('enroll-msg').textContent=d.error||'invalid invite'; $('enroll-btn').disabled=true; return; }
+  $('enroll-user').textContent=d.username; $('enroll-secret').textContent=d.secret;
+  new QRCode($('enroll-qr'),{text:d.otpauth,width:168,height:168,correctLevel:QRCode.CorrectLevel.M});
+  $('enroll-btn').onclick=()=>acceptInvite(token);
+}
+async function acceptInvite(token){
+  const pw=$('enroll-pw').value, pw2=$('enroll-pw2').value, totp=$('enroll-totp').value.trim(), m=$('enroll-msg');
+  if(pw.length<10){ m.className='text-danger small mt-2'; m.textContent='Password must be at least 10 characters.'; return; }
+  if(pw!==pw2){ m.className='text-danger small mt-2'; m.textContent='Passwords do not match.'; return; }
+  m.className='small mt-2'; m.textContent='setting up…';
+  const r=await fetch(API+'/api/admin/accept-invite',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({token,password:pw,totp})});
+  const d=await r.json().catch(()=>({}));
+  if(r.ok){ m.className='text-success small mt-2'; m.innerHTML='✓ Account ready. <a href="'+location.pathname+'">Sign in →</a>'; $('enroll-btn').disabled=true; }
+  else { m.className='text-danger small mt-2'; m.textContent=d.error||'failed'; }
+}
 $('login').onclick=login;
+$('master-toggle').onclick=e=>{ e.preventDefault(); setMaster(!masterMode); };
+$('invite-btn').onclick=invite;
+$('username').addEventListener('keydown',e=>{ if(e.key==='Enter') $('password').focus(); });
+$('password').addEventListener('keydown',e=>{ if(e.key==='Enter') $('totp').focus(); });
 $('token').addEventListener('keydown',e=>{ if(e.key==='Enter') $('totp').focus(); });
 $('totp').addEventListener('keydown',e=>{ if(e.key==='Enter') login(); });
 $('logout').onclick=logout;
@@ -200,7 +288,14 @@ document.addEventListener('click',async ev=>{ const x=ev.target.closest('.bact')
   if(!confirm(act==='cancel'?('Cancel build '+id.slice(0,8)+'?'):('Remove the artifact + Actions run for '+id.slice(0,8)+' now?'))) return;
   try{ await fetch(API+'/api/admin/'+(act==='cancel'?'cancel':'expire')+'/'+id,{method:'POST',headers:{Authorization:'Bearer '+tok()}}); }catch{}
   refresh(); });
-if(tok()){ adminGet().then(show).catch(()=>sessionStorage.removeItem(TK)); }
+// Remove an admin user (master only).
+document.addEventListener('click',async ev=>{ const x=ev.target.closest('.deluser'); if(!x) return; ev.preventDefault();
+  const u=x.dataset.u; if(!confirm('Remove admin "'+u+'"? They are signed out immediately.')) return;
+  await fetch(API+'/api/admin/users/'+encodeURIComponent(u),{method:'DELETE',headers:{Authorization:'Bearer '+tok()}});
+  renderUsers(); });
+const inviteParam=new URLSearchParams(location.search).get('invite');
+if(inviteParam){ startEnroll(inviteParam); }
+else if(tok()){ adminGet().then(show).catch(()=>sessionStorage.removeItem(TK)); }
 setInterval(()=>{ if($('app').style.display!=='none') refresh(); },5000);
 </script>
 </body>
