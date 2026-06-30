@@ -13,17 +13,19 @@ binding = "DB"
 database_name = "thingino-builder"
 database_id = "5e72dc96-8856-4418-b59f-d872bca8330f"
 
-# Per-IP request throttle in FRONT of /api/build's D1 work (audit F12). The Worker
-# code (handleBuild) uses this binding when present and self-disables when absent.
-# VERIFIED a NO-OP on the free plan: a sustained 24-request test, ~1.5s apart at a
-# 5/10s cap, never tripped (limit() always returns success). It deploys + Cloudflare
-# shows it as a Rate Limit binding, but never meters on free workers.dev. Left
-# commented so it isn't a misleading no-op; the code self-disables when unbound. On
-# Workers Paid ($5/mo) uncomment to enable a 20-req/60s-per-IP cap (period = 10 or 60):
-# [[ratelimits]]
-# name = "BUILD_RL"
-# namespace_id = "1001"
-# simple = { limit = 20, period = 60 }
+# Per-IP request throttle in FRONT of /api/build's D1 work, so a flood can't exhaust
+# the free D1 budget (audit F12). A Durable Object (one instance per IP) gives a
+# strict, free-tier-enforcing counter — unlike the Workers Rate Limiting binding,
+# which is a verified no-op on free. SQLite-backed = free-tier eligible; the limiter
+# stores nothing, so it stays well under the free DO limits. Code self-disables if
+# RL_DO is unbound (e.g. local dev).
+[[durable_objects.bindings]]
+name = "RL_DO"
+class_name = "RateLimiter"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RateLimiter"]
 
 [vars]
 VERSION = "v0.1.0"

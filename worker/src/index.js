@@ -204,15 +204,19 @@ async function handleStats(request, env) {
 async function handleBuild(request, env) {
   const rawIp = request.headers.get("CF-Connecting-IP") || "";
   const ip = ipBucket(rawIp);
-  // Optional per-IP request cap in FRONT of all the D1 work, so a /api/build flood
-  // can't burn the D1 budget (audit F12). Uses the Workers Rate Limiting binding —
-  // self-disables when unbound. NOTE: verified to be a no-op on the free plan
-  // (limit() always returns success), so it only enforces on Workers Paid; bind
-  // BUILD_RL in wrangler.toml there to enable. On free, the (race-free) build caps
-  // are the practical protection; a flood degrades D1 (transient), not a compromise.
-  if (env.BUILD_RL) {
-    const { success } = await env.BUILD_RL.limit({ key: ip });
-    if (!success) return json({ error: "too many requests from your network — slow down" }, 429, env);
+  // Per-IP request cap in FRONT of all the D1 work, so a /api/build flood can't burn
+  // the D1 budget (audit F12). A Durable Object (one instance per IP) gives a single
+  // strongly-consistent counter that actually enforces on the free plan — unlike the
+  // rate-limit binding, which is a no-op there. Self-disables if RL_DO is unbound;
+  // fails OPEN if the limiter errors (never block legit users on a limiter hiccup).
+  if (env.RL_DO) {
+    try {
+      const stub = env.RL_DO.get(env.RL_DO.idFromName(ip));
+      const { success } = await (await stub.fetch("https://rl/", {
+        method: "POST", body: JSON.stringify({ max: 20, period: 60 }),
+      })).json();
+      if (!success) return json({ error: "too many requests from your network — slow down" }, 429, env);
+    } catch (_) { /* limiter unavailable — fail open */ }
   }
   let body;
   try { body = await request.json(); } catch { return json({ error: "bad request" }, 400, env); }
@@ -817,6 +821,24 @@ async function handleAdminLimits(request, env) {
   await setSetting(env, "limits", JSON.stringify(next));
   await logEvent(env, "admin_limits", null, null, null, JSON.stringify(next));
   return json({ ok: true, limits: next }, 200, env);
+}
+
+// ---- Durable Object: per-IP rate limiter (audit F12) ----------------------
+// One instance per key (IP) → a single strongly-consistent in-memory fixed-window
+// counter. Declared SQLite-backed (free-tier eligible) but stores nothing; on
+// eviction the window just resets (fail-open), which is fine for a flood guard.
+export class RateLimiter {
+  constructor(_state, _env) {
+    this.count = 0;
+    this.windowStart = 0;
+  }
+  async fetch(request) {
+    const { max, period } = await request.json();
+    const now = Date.now() / 1000;
+    if (now - this.windowStart >= period) { this.windowStart = now; this.count = 0; }
+    this.count++;
+    return Response.json({ success: this.count <= max });
+  }
 }
 
 // ---- entrypoints ----------------------------------------------------------
