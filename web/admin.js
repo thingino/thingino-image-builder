@@ -1,7 +1,7 @@
 document.querySelectorAll('form').forEach(function(f){ f.addEventListener('submit', function(e){ e.preventDefault(); }); });
 const API = window.API_BASE || '';
 const TK='thingino_admin_token';
-const tok=()=>sessionStorage.getItem(TK)||'';
+const tok=()=>localStorage.getItem(TK)||'';
 const $=id=>document.getElementById(id);
 const short=s=>s?String(s).slice(0,8):'';
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -32,11 +32,11 @@ async function login(){
     :{username:$('username').value.trim().toLowerCase(),password:$('password').value,totp:$('totp').value.trim()};
   const r=await fetch(API+'/api/admin/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
   const d=await r.json().catch(()=>({}));
-  if(r.ok&&d.session){ sessionStorage.setItem(TK,d.session); show(); }
-  else { $('gate-err').textContent=d.error||I18N.t('err_invalid_creds'); sessionStorage.removeItem(TK); }
+  if(r.ok&&d.session){ localStorage.setItem(TK,d.session); show(); }
+  else { $('gate-err').textContent=d.error||I18N.t('err_invalid_creds'); localStorage.removeItem(TK); }
 }
 function show(){ $('gate').style.display='none'; $('app').style.display=''; refresh(); }
-async function logout(){ try{ await fetch(API+'/api/admin/logout',{method:'POST',headers:{Authorization:'Bearer '+tok()}}); }catch{} sessionStorage.removeItem(TK); location.reload(); }
+async function logout(){ try{ await fetch(API+'/api/admin/logout',{method:'POST',headers:{Authorization:'Bearer '+tok()}}); }catch{} localStorage.removeItem(TK); location.reload(); }
 
 let enabled=true;
 async function refresh(){
@@ -186,5 +186,5 @@ window.addEventListener('i18nchange',function(){
 });
 const inviteParam=new URLSearchParams(location.search).get('invite');
 if(inviteParam){ startEnroll(inviteParam); }
-else if(tok()){ adminGet().then(show).catch(()=>sessionStorage.removeItem(TK)); }
+else if(tok()){ adminGet().then(show).catch(()=>localStorage.removeItem(TK)); }
 setInterval(()=>{ if($('app').style.display!=='none') refresh(); },5000);
