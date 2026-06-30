@@ -12,7 +12,7 @@ The actual firmware builds run on GitHub Actions, so a tiny VPS is plenty.
 
 - A VPS with **Podman** (5+ recommended) and **systemd**.
 - A **domain** with an A/AAAA record at the VPS; ports **80 + 443** open.
-- A **GitHub token** for the builder repo (see below).
+- A **GitHub token or App** for the builder repo (see below).
 
 ## Deploy
 

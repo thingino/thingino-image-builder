@@ -24,8 +24,8 @@ browser ──POST /api/build──▶ Rust broker ──repository_dispatch─�
 
 ## Features
 
-- **Defconfig picker** over every thingino camera profile; shows the exact
-  commit being built.
+- **Defconfig picker** over every thingino camera profile (`cameras` +
+  `cameras-exp`), fetched live at the pinned commit; shows the exact commit built.
 - **Dedup** — an identical `(defconfig, commit)` that's in flight or built within
   the window is reused, not rebuilt.
 - **Limits** — per-user **2/hr**, per-IP **3/hr** (IPv6 bucketed by /64), global
@@ -33,7 +33,10 @@ browser ──POST /api/build──▶ Rust broker ──repository_dispatch─�
 - **Live status** — queue position, build progress, cancel (persisted
   "cancelling" state until the run stops), 30-minute download window.
 - **Admin panel** (`/admin.html`) — live stats, recent builds/events with
-  requester uid + IP, a global **kill switch**, behind **TOTP 2FA**.
+  requester uid + IP, a global **kill switch**, one-click **self-update**, behind
+  **TOTP 2FA**.
+- **GitHub auth** via static token **or a GitHub App** — the broker mints its own
+  short-lived installation tokens, so nothing long-lived sits on the box.
 - **Audit log**, **IPv6** end to end, **singleton** broker (flock + pidfile),
   self-hosted frontend assets (no CDN).
 
@@ -44,8 +47,9 @@ browser ──POST /api/build──▶ Rust broker ──repository_dispatch─�
 | `broker/` | Rust control plane + scheduler (axum + SQLite) |
 | `web/` | static UI (Bootstrap; self-hosted assets in `web/vendor/`) |
 | `.github/workflows/build.yml` | the CI build worker (`repository_dispatch`) |
-| `Containerfile` | broker image |
-| `deploy/quadlet/`, `deploy.sh` | Podman + systemd (Quadlet) deployment |
+| `.github/workflows/release.yml` | builds + publishes the image to `ghcr.io` |
+| `Containerfile` | broker image (published to `ghcr.io/thingino/thingino-web-builder`) |
+| `deploy/quadlet/`, `deploy/systemd/`, `deploy.sh` | Podman/Quadlet deploy + self-update units |
 | `setup.sh`, `creds.sh` | generate / rotate the admin token + TOTP |
 | `DEPLOY.md` | full deployment guide |
 
@@ -58,9 +62,13 @@ guide in **[DEPLOY.md](DEPLOY.md)** — short version:
 sudo git clone https://github.com/thingino/thingino-web-builder.git /opt/thingino-web-builder
 cd /opt/thingino-web-builder
 sudo ./setup.sh          # generate admin token + TOTP (prints a QR)
-# edit .env: DOMAIN, GITHUB_REPO, GITHUB_TOKEN
-sudo ./deploy.sh         # build image, install Quadlet units, start
+# edit .env: DOMAIN, GITHUB_REPO, and a GITHUB_TOKEN (or a GitHub App)
+sudo ./deploy.sh         # pull the ghcr image, install Quadlet units, start
 ```
+
+The broker image is built by CI and published to
+`ghcr.io/thingino/thingino-web-builder`, so the box just pulls it — no toolchain
+needed. The admin panel offers a one-click **self-update** when a newer image ships.
 
 ## Local dev
 
@@ -72,5 +80,6 @@ GITHUB_TOKEN=$(gh auth token) GITHUB_REPO=<owner>/<repo> \
   ./target/debug/thingino-build-broker      # serves http://[::]:8080
 ```
 
-`defconfigs.json` is the build allowlist (one entry per `configs/cameras/*`);
-regenerate it from a thingino checkout when boards change.
+`defconfigs.json` is a **baked fallback** allowlist; at runtime the broker fetches
+the live list (`configs/cameras` + `configs/cameras-exp`) from GitHub at the pinned
+commit, so new boards appear without redeploying or regenerating it.

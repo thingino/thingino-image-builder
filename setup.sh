@@ -29,5 +29,5 @@ echo "  Enroll this in Google Authenticator:"
 if command -v qrencode >/dev/null 2>&1; then qrencode -t ANSIUTF8 "$URI"; else echo "    (install qrencode for a QR, or enter the secret manually)"; echo "    $URI"; fi
 echo
 echo "Next:"
-echo "  1. edit .env  -> DOMAIN, GITHUB_REPO, GITHUB_TOKEN"
-echo "  2. sudo ./deploy.sh"
+echo "  1. edit .env  -> DOMAIN, GITHUB_REPO, and a GITHUB_TOKEN (or GitHub App)"
+echo "  2. sudo ./deploy.sh   (pulls the ghcr image + starts)"
