@@ -35,7 +35,10 @@
         <h2 class="card-title mb-0 fs-5" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;">
           <i class="bi bi-cpu me-1"></i><span class="d-none d-sm-inline" data-i18n="header_full"> Thingino Firmware Builder</span><span class="d-sm-none" data-i18n="header_short"> Thingino Builder</span>
         </h2>
-        <span id="commit-badge" class="badge bg-info-subtle text-info border border-info-subtle ms-auto d-none" title="thingino commit being built" data-i18n-title="commit_badge_title"></span>
+        <div class="ms-auto d-flex align-items-center gap-2">
+          <span id="commit-badge" class="badge bg-info-subtle text-info border border-info-subtle d-none" title="thingino commit being built" data-i18n-title="commit_badge_title"></span>
+          <span id="lang-slot"></span>
+        </div>
       </div>
 
       <div class="card-body">
@@ -63,12 +66,19 @@
   </div>
 
   <p class="mt-2 small text-center muted">
-    <a href="https://github.com/thingino/thingino-web-builder" target="_blank" class="link-secondary text-decoration-none" data-i18n="footer_link">thingino firmware builder</a> <span id="version"></span> · <a href="admin.html" class="link-secondary text-decoration-none"><i class="bi bi-shield-lock me-1"></i><span data-i18n="admin_link">admin</span></a> · <span id="lang-slot"></span>
+    <a href="https://github.com/thingino/thingino-web-builder" target="_blank" class="link-secondary text-decoration-none" data-i18n="footer_link">thingino firmware builder</a> <span id="version"></span> · <a href="admin.html" class="link-secondary text-decoration-none"><i class="bi bi-shield-lock me-1"></i><span data-i18n="admin_link">admin</span></a>
   </p>
 
   <script src="vendor/bootstrap.bundle.min.js"></script>
   <script src="i18n.js"></script>
   <script src="i18n-idx-en.js"></script>
+  <script src="i18n-idx-es.js"></script>
+  <script src="i18n-idx-fr.js"></script>
+  <script src="i18n-idx-de.js"></script>
+  <script src="i18n-idx-zh-CN.js"></script>
+  <script src="i18n-idx-pt.js"></script>
+  <script src="i18n-idx-ru.js"></script>
+  <script src="i18n-idx-ja.js"></script>
   <script src="config.js"></script>
   <script src="app.js"></script>
 </body>
