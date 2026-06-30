@@ -5,7 +5,7 @@ I18N.add("de", {
   // gate / login — static
   gate_title: "Admin",
   signin_hint: "Melden Sie sich mit Admin-Benutzername, Passwort und 6-stelligem Code an.",
-  master_hint: "Notzugang: Master-Token und 6-stelligen Master-Code eingeben.",
+  master_hint: "Master-Token und 6-stelligen Master-Code eingeben.",
   username_ph: "Benutzername",
   password_ph: "Passwort",
   token_ph: "Master-Token",

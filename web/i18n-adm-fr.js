@@ -5,7 +5,7 @@ I18N.add("fr", {
   // gate / login — static
   gate_title: "Admin",
   signin_hint: "Connectez-vous avec votre nom d'utilisateur admin, votre mot de passe et votre code à 6 chiffres.",
-  master_hint: "Accès d'urgence : saisissez le jeton maître et le code maître à 6 chiffres.",
+  master_hint: "Saisissez le jeton maître et le code maître à 6 chiffres.",
   username_ph: "Nom d'utilisateur",
   password_ph: "Mot de passe",
   token_ph: "Jeton maître",

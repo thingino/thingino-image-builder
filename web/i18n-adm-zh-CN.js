@@ -5,7 +5,7 @@ I18N.add("zh-CN", {
   // gate / login — static
   gate_title: "管理后台",
   signin_hint: "使用您的管理员用户名、密码和 6 位验证码登录。",
-  master_hint: "应急访问：输入主令牌及其 6 位验证码。",
+  master_hint: "输入主令牌及其 6 位验证码。",
   username_ph: "用户名",
   password_ph: "密码",
   token_ph: "主令牌",

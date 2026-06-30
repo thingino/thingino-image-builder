@@ -5,7 +5,7 @@ I18N.add("pt", {
   // gate / login — static
   gate_title: "Admin",
   signin_hint: "Entre com seu nome de usuário admin, senha e código de 6 dígitos.",
-  master_hint: "Acesso de emergência: insira o token mestre e o código mestre de 6 dígitos.",
+  master_hint: "Insira o token mestre e o código mestre de 6 dígitos.",
   username_ph: "Nome de usuário",
   password_ph: "Senha",
   token_ph: "Token mestre",

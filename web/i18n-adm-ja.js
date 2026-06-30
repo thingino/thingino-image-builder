@@ -5,7 +5,7 @@ I18N.add("ja", {
   // gate / login — static
   gate_title: "管理者",
   signin_hint: "管理者のユーザー名、パスワード、6桁のコードでサインインしてください。",
-  master_hint: "緊急アクセス: マスタートークンとマスターの6桁コードを入力してください。",
+  master_hint: "マスタートークンとマスターの6桁コードを入力してください。",
   username_ph: "ユーザー名",
   password_ph: "パスワード",
   token_ph: "マスタートークン",

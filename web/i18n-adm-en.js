@@ -5,7 +5,7 @@ I18N.add("en", {
   // gate / login — static
   gate_title: "Admin",
   signin_hint: "Sign in with your admin username, password, and 6-digit code.",
-  master_hint: "Break-glass: enter the master token and the master 6-digit code.",
+  master_hint: "Enter the master token and the master 6-digit code.",
   username_ph: "Username",
   password_ph: "Password",
   token_ph: "Master token",

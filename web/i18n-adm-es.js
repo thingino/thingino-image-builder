@@ -5,7 +5,7 @@ I18N.add("es", {
   // puerta / inicio de sesión — estático
   gate_title: "Admin",
   signin_hint: "Inicia sesión con tu usuario de administrador, contraseña y código de 6 dígitos.",
-  master_hint: "Acceso de emergencia: introduce el token maestro y el código maestro de 6 dígitos.",
+  master_hint: "Introduce el token maestro y el código maestro de 6 dígitos.",
   username_ph: "Usuario",
   password_ph: "Contraseña",
   token_ph: "Token maestro",
