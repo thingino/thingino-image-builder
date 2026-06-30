@@ -17,7 +17,7 @@ The actual firmware builds run on GitHub Actions, so a tiny VPS is plenty.
 ## Deploy
 
 ```bash
-sudo git clone https://github.com/gtxaspec/thingino-web-builder.git /opt/thingino-web-builder
+sudo git clone https://github.com/thingino/thingino-web-builder.git /opt/thingino-web-builder
 cd /opt/thingino-web-builder
 
 sudo ./setup.sh                  # generates ADMIN_TOKEN + ADMIN_TOTP_SECRET, prints a QR

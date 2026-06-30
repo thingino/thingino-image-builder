@@ -8,7 +8,7 @@ Type=simple
 WorkingDirectory=/opt/thingino-broker
 # secret.env holds the secrets only (chmod 600, root-owned):
 #   GITHUB_TOKEN=github_pat_...        (fine-grained, scoped to the builder repo)
-#   GITHUB_REPO=gtxaspec/thingino-web-builder
+#   GITHUB_REPO=thingino/thingino-web-builder
 EnvironmentFile=/opt/thingino-broker/secret.env
 Environment=BIND_ADDR=127.0.0.1:8080
 Environment=STATIC_DIR=/opt/thingino-broker/web

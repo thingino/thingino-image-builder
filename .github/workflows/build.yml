@@ -67,7 +67,7 @@ jobs:
           DEFCONFIG="${RAW_DEFCONFIG:-}"
           BUILD_ID="${RAW_BUILD_ID:-}"
           # defconfig: lowercase letters, digits, underscore only (no path / shell metachars)
-          if [[ ! "$DEFCONFIG" =~ ^[a-z0-9_]+$ ]]; then
+          if [[ ! "$DEFCONFIG" =~ ^[a-z0-9_+]+$ ]]; then
             echo "::error::Invalid defconfig token: '$DEFCONFIG'"; exit 1
           fi
           # build_id: uuid shape (hex + dashes); generate if absent
@@ -124,13 +124,16 @@ jobs:
       - name: Mark workspace safe for git
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE/thingino"
 
-      - name: Verify defconfig exists
+      - name: Verify defconfig + resolve group
         env:
           DEFCONFIG: ${{ steps.in.outputs.defconfig }}
         run: |
           set -euo pipefail
-          test -f "thingino/configs/cameras/${DEFCONFIG}/${DEFCONFIG}_defconfig" \
-            || { echo "::error::Unknown defconfig: ${DEFCONFIG}"; exit 1; }
+          if   [ -f "thingino/configs/cameras/${DEFCONFIG}/${DEFCONFIG}_defconfig" ]; then GROUP="";
+          elif [ -f "thingino/configs/cameras-exp/${DEFCONFIG}/${DEFCONFIG}_defconfig" ]; then GROUP="exp";
+          else echo "::error::Unknown defconfig: ${DEFCONFIG}"; exit 1; fi
+          echo "GROUP=$GROUP" >> "$GITHUB_ENV"
+          echo "group: ${GROUP:-cameras}"
 
       - name: Configure cache-key vars
         run: |
@@ -189,7 +192,7 @@ jobs:
         run: |
           set -euo pipefail
           cd thingino
-          BOARD="$DEFCONFIG" make fast WORKFLOW=1
+          BOARD="$DEFCONFIG" GROUP="${GROUP:-}" make fast WORKFLOW=1
 
       - name: Collect image
         env:

@@ -60,14 +60,24 @@ struct Config {
     admin_totp_secret: Option<String>,
 }
 
+/// Thingino's pinned commit + the buildable defconfig list AT that commit. Seeded
+/// from the baked defconfigs.json, then refreshed live from GitHub so new boards
+/// appear without a redeploy. List and commit always move together.
+#[derive(Clone)]
+struct Thingino {
+    commit: Option<String>,
+    list: Arc<Vec<String>>,
+    set: Arc<HashSet<String>>,
+    list_commit: Option<String>,
+    fetched_at: i64,
+}
+
 #[derive(Clone)]
 struct AppState {
     db: Arc<Mutex<Connection>>,
     http: reqwest::Client,
     cfg: Arc<Config>,
-    defconfigs: Arc<HashSet<String>>,
-    defconfigs_list: Arc<Vec<String>>,
-    commit: Arc<Mutex<(Option<String>, i64)>>,
+    thingino: Arc<Mutex<Thingino>>,
     sessions: Arc<Mutex<std::collections::HashMap<String, i64>>>,
 }
 
@@ -322,9 +332,10 @@ async fn main() -> anyhow::Result<()> {
 
     let raw = std::fs::read_to_string(&defconfigs_path)
         .map_err(|e| anyhow::anyhow!("reading {defconfigs_path}: {e}"))?;
-    let list: Vec<String> = serde_json::from_str(&raw)?;
-    let defconfigs: HashSet<String> = list.iter().cloned().collect();
-    tracing::info!("loaded {} defconfigs", list.len());
+    let mut fallback_list: Vec<String> = serde_json::from_str(&raw)?;
+    fallback_list.sort();
+    let fallback_set: HashSet<String> = fallback_list.iter().cloned().collect();
+    tracing::info!("loaded {} fallback defconfigs", fallback_list.len());
 
     let conn = Connection::open(&db_path)?;
     conn.execute_batch(
@@ -367,9 +378,13 @@ async fn main() -> anyhow::Result<()> {
         db: Arc::new(Mutex::new(conn)),
         http,
         cfg: Arc::new(cfg),
-        defconfigs: Arc::new(defconfigs),
-        defconfigs_list: Arc::new(list),
-        commit: Arc::new(Mutex::new((None, 0))),
+        thingino: Arc::new(Mutex::new(Thingino {
+            commit: None,
+            list: Arc::new(fallback_list),
+            set: Arc::new(fallback_set),
+            list_commit: None,
+            fetched_at: 0,
+        })),
         sessions: Arc::new(Mutex::new(std::collections::HashMap::new())),
     };
 
@@ -401,7 +416,8 @@ async fn main() -> anyhow::Result<()> {
 // ---- public handlers ------------------------------------------------------
 
 async fn get_defconfigs(State(st): State<AppState>) -> Response {
-    Json(st.defconfigs_list.as_ref().clone()).into_response()
+    let t = resolve_thingino(&st).await;
+    Json(t.list.as_ref().clone()).into_response()
 }
 
 async fn get_stats(State(st): State<AppState>, headers: HeaderMap) -> Response {
@@ -450,7 +466,8 @@ async fn post_build(
     Json(req): Json<BuildReq>,
 ) -> Response {
     let defconfig = req.defconfig.trim().to_string();
-    if !st.defconfigs.contains(&defconfig) {
+    let thingino = resolve_thingino(&st).await;
+    if !thingino.set.contains(&defconfig) {
         return json_err(StatusCode::BAD_REQUEST, "unknown defconfig");
     }
     let uid = resolve_uid(&headers);
@@ -458,7 +475,7 @@ async fn post_build(
     let now_ts = now();
     let cutoff = now_ts - WINDOW_SECS;
     let build_id = Uuid::new_v4().to_string();
-    let commit = current_commit(&st).await;
+    let commit = thingino.commit.clone();
 
     let position: i64 = {
         let conn = st.db.lock().unwrap();
@@ -800,20 +817,11 @@ fn query_recent_events(conn: &Connection, limit: i64) -> Vec<serde_json::Value> 
 
 // ---- scheduler ------------------------------------------------------------
 
-/// The thingino commit that builds will use — resolved from the configured
-/// repo/ref and cached ~2 minutes.
-async fn current_commit(st: &AppState) -> Option<String> {
-    {
-        let c = st.commit.lock().unwrap();
-        if let Some(ref sha) = c.0 {
-            if now() - c.1 < 120 {
-                return Some(sha.clone());
-            }
-        }
-    }
-    // Public read — no auth, so a builder-repo-scoped token needs no extra access.
+// Public reads (no auth) so a builder-repo-scoped token needs no thingino access.
+
+async fn fetch_commit(st: &AppState) -> Option<String> {
     let url = format!("https://api.github.com/repos/{}/commits/{}", st.cfg.thingino_repo, st.cfg.thingino_ref);
-    let sha = match st
+    match st
         .http
         .get(&url)
         .header("Accept", "application/vnd.github+json")
@@ -823,11 +831,95 @@ async fn current_commit(st: &AppState) -> Option<String> {
     {
         Ok(r) => r.json::<serde_json::Value>().await.ok().and_then(|v| v["sha"].as_str().map(|s| s.to_string())),
         Err(_) => None,
-    };
-    if let Some(ref s) = sha {
-        *st.commit.lock().unwrap() = (Some(s.clone()), now());
     }
-    sha
+}
+
+fn valid_board(n: &str) -> bool {
+    // board tokens are lowercase/digit/underscore, plus '+' for the eth+<wifi> combos.
+    !n.is_empty() && n.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '+')
+}
+
+/// Dir names (board folders) under configs/<subdir> at a commit.
+async fn fetch_camera_dir(st: &AppState, commit: &str, subdir: &str) -> Option<Vec<String>> {
+    let url = format!("https://api.github.com/repos/{}/contents/configs/{}?ref={}", st.cfg.thingino_repo, subdir, commit);
+    let v: serde_json::Value = st
+        .http
+        .get(&url)
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .send()
+        .await
+        .ok()?
+        .json()
+        .await
+        .ok()?;
+    let list: Vec<String> = v
+        .as_array()?
+        .iter()
+        .filter(|e| e["type"].as_str() == Some("dir"))
+        .filter_map(|e| e["name"].as_str())
+        .filter(|n| valid_board(n))
+        .map(|s| s.to_string())
+        .collect();
+    Some(list)
+}
+
+/// Buildable boards = configs/cameras (stable) + configs/cameras-exp (experimental).
+/// The workflow detects which group a board is in and passes GROUP= accordingly.
+async fn fetch_defconfigs(st: &AppState, commit: &str) -> Option<Vec<String>> {
+    let mut names = fetch_camera_dir(st, commit, "cameras").await?;
+    if let Some(exp) = fetch_camera_dir(st, commit, "cameras-exp").await {
+        names.extend(exp);
+    }
+    names.sort();
+    names.dedup();
+    if names.is_empty() {
+        None
+    } else {
+        Some(names)
+    }
+}
+
+/// Resolve thingino's pinned commit + the defconfig list at that commit, cached
+/// ~2 min. The list is re-fetched only when the commit moves; on any failure the
+/// last-good (seeded from defconfigs.json) cache is kept.
+async fn resolve_thingino(st: &AppState) -> Thingino {
+    {
+        let t = st.thingino.lock().unwrap();
+        if t.commit.is_some() && now() - t.fetched_at < 120 {
+            return t.clone();
+        }
+    }
+    let commit = fetch_commit(st).await;
+    let need_list = {
+        let t = st.thingino.lock().unwrap();
+        match (&commit, &t.list_commit) {
+            (Some(c), Some(lc)) => c != lc,
+            (Some(_), None) => true,
+            (None, _) => false,
+        }
+    };
+    let fetched = match (&commit, need_list) {
+        (Some(c), true) => fetch_defconfigs(st, c).await.map(|l| (l, c.clone())),
+        _ => None,
+    };
+    let mut t = st.thingino.lock().unwrap();
+    if let Some(c) = commit {
+        t.commit = Some(c);
+        t.fetched_at = now();
+    }
+    if let Some((list, lc)) = fetched {
+        t.set = Arc::new(list.iter().cloned().collect());
+        t.list = Arc::new(list);
+        t.list_commit = Some(lc);
+        tracing::info!("defconfigs refreshed: {} boards @ {}", t.list.len(), t.list_commit.as_deref().unwrap_or("?"));
+    }
+    t.clone()
+}
+
+/// The thingino commit builds will use (pinned).
+async fn current_commit(st: &AppState) -> Option<String> {
+    resolve_thingino(st).await.commit
 }
 
 async fn scheduler_loop(st: AppState) {
@@ -849,6 +941,7 @@ struct RunRow {
 
 async fn scheduler_step(st: &AppState) -> anyhow::Result<()> {
     let now_ts = now();
+    let _ = resolve_thingino(st).await; // keep commit + defconfig list warm (picks up new boards)
 
     // 1) Snapshot running builds + the next queued builds to dispatch.
     let (running, to_dispatch): (Vec<(String, Option<i64>, i64, bool)>, Vec<(String, String, Option<String>)>) = {

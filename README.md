@@ -55,7 +55,7 @@ Podman + Quadlet (systemd); TLS via Caddy (auto Let's Encrypt or BYO certs). Ful
 guide in **[DEPLOY.md](DEPLOY.md)** — short version:
 
 ```bash
-sudo git clone https://github.com/gtxaspec/thingino-web-builder.git /opt/thingino-web-builder
+sudo git clone https://github.com/thingino/thingino-web-builder.git /opt/thingino-web-builder
 cd /opt/thingino-web-builder
 sudo ./setup.sh          # generate admin token + TOTP (prints a QR)
 # edit .env: DOMAIN, GITHUB_REPO, GITHUB_TOKEN
