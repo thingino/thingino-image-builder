@@ -7,3 +7,5 @@ broker.lock
 broker.pid
 .env
 certs
+*.pem
+app-key.pem
