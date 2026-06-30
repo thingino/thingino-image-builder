@@ -99,7 +99,7 @@ async function login(){
   else { $('gate-err').textContent=d.error||'Invalid credentials.'; sessionStorage.removeItem(TK); }
 }
 function show(){ $('gate').style.display='none'; $('app').style.display=''; refresh(); }
-function logout(){ sessionStorage.removeItem(TK); location.reload(); }
+async function logout(){ try{ await fetch('/api/admin/logout',{method:'POST',headers:{Authorization:'Bearer '+tok()}}); }catch{} sessionStorage.removeItem(TK); location.reload(); }
 
 let enabled=true;
 async function refresh(){

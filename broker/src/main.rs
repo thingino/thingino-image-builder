@@ -22,9 +22,13 @@
 use std::{
     collections::HashSet,
     net::{IpAddr, SocketAddr},
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+
+// parking_lot mutexes don't poison: a panic while holding the lock releases it
+// cleanly instead of wedging every later `.lock()` (which would kill the scheduler).
+use parking_lot::Mutex;
 
 use axum::{
     extract::{ConnectInfo, Path, State},
@@ -40,6 +44,15 @@ use tower_http::services::ServeDir;
 use uuid::Uuid;
 
 const WINDOW_SECS: i64 = 3600;
+const DAY_SECS: i64 = 86400;
+const THINGINO_CACHE_SECS: i64 = 300; // trust a resolved commit/list this long
+const SESSION_TTL_SECS: i64 = 8 * 3600;
+const TOKEN_REFRESH_SECS: i64 = 3300; // re-mint the App token before its ~1h expiry
+const RELEASE_CACHE_SECS: i64 = 600;
+const EVENT_TTL_SECS: i64 = 30 * DAY_SECS; // prune audit events older than this
+const EXPIRED_BUILD_TTL_SECS: i64 = 7 * DAY_SECS; // drop long-expired build rows
+const LOGIN_FAIL_WINDOW_SECS: i64 = 900; // admin-login throttle window
+const LOGIN_FAIL_MAX: i64 = 10; // ...and max failures within it per IP
 
 struct Config {
     github_token: Option<String>,
@@ -96,6 +109,12 @@ fn env_i64(key: &str, default: i64) -> i64 {
 }
 fn now() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+}
+
+/// Apply the standard GitHub REST headers to a request builder.
+fn gh(req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    req.header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
 }
 
 /// Builder version: Cargo package version + git short-sha (baked via BUILD_SHA at build time).
@@ -181,7 +200,10 @@ fn json_err(code: StatusCode, msg: &str) -> Response {
     (code, Json(json!({ "error": msg }))).into_response()
 }
 fn set_uid_cookie(resp: &mut Response, uid: &str) {
-    let cookie = format!("uid={uid}; Path=/; Max-Age=31536000; SameSite=Lax");
+    // HttpOnly: JS never reads it (the uid is mirrored from the JSON body to
+    // localStorage). Secure: production is HTTPS; on plain-HTTP dev the localStorage
+    // mirror still carries the uid via X-Builder-Uid.
+    let cookie = format!("uid={uid}; Path=/; Max-Age=31536000; SameSite=Lax; Secure; HttpOnly");
     if let Ok(hv) = header::HeaderValue::from_str(&cookie) {
         resp.headers_mut().append(header::SET_COOKIE, hv);
     }
@@ -244,7 +266,7 @@ fn bearer(headers: &HeaderMap) -> Option<&str> {
 fn session_ok(headers: &HeaderMap, st: &AppState) -> bool {
     let Some(tok) = bearer(headers) else { return false; };
     let now_ts = now();
-    let mut s = st.sessions.lock().unwrap();
+    let mut s = st.sessions.lock();
     s.retain(|_, exp| *exp > now_ts);
     s.get(tok).map(|&exp| exp > now_ts).unwrap_or(false)
 }
@@ -300,13 +322,19 @@ fn totp_check(secret_b32: &str, code: &str) -> bool {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt().with_max_level(tracing::Level::INFO).init();
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
 
     // Singleton guard — refuse to start if another broker already holds the lock.
     let lock_path = env_or("LOCK_PATH", "broker.lock");
     let lock_file = std::fs::OpenOptions::new()
         .create(true)
         .write(true)
+        .truncate(false)
         .open(&lock_path)
         .map_err(|e| anyhow::anyhow!("opening lock {lock_path}: {e}"))?;
     if unsafe { libc::flock(std::os::unix::io::AsRawFd::as_raw_fd(&lock_file), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
@@ -366,6 +394,8 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("loaded {} fallback defconfigs", fallback_list.len());
 
     let conn = Connection::open(&db_path)?;
+    conn.busy_timeout(Duration::from_secs(5))?;
+    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS builds(
             id TEXT PRIMARY KEY,
@@ -434,14 +464,37 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/admin/stats", get(admin_stats))
         .route("/api/admin/toggle", post(admin_toggle))
         .route("/api/admin/update", post(admin_update))
+        .route("/api/admin/logout", post(admin_logout))
         .fallback_service(ServeDir::new(&static_dir).append_index_html_on_directories(true))
         .with_state(state);
 
     let addr: SocketAddr = bind_addr.parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!("broker listening on http://{addr}");
-    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await?;
+    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
     Ok(())
+}
+
+/// Resolve on SIGINT or SIGTERM so `systemctl stop/restart` drains cleanly.
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+    #[cfg(unix)]
+    let term = async {
+        if let Ok(mut s) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            s.recv().await;
+        }
+    };
+    #[cfg(not(unix))]
+    let term = std::future::pending::<()>();
+    tokio::select! {
+        _ = ctrl_c => {}
+        _ = term => {}
+    }
+    tracing::info!("shutdown signal received");
 }
 
 // ---- public handlers ------------------------------------------------------
@@ -455,13 +508,13 @@ async fn get_stats(State(st): State<AppState>, headers: HeaderMap) -> Response {
     let uid = resolve_uid(&headers);
     let now_ts = now();
     let commit = current_commit(&st).await;
-    let conn = st.db.lock().unwrap();
+    let conn = st.db.lock();
     let running: i64 = conn.query_row("SELECT count(*) FROM builds WHERE state='running'", [], |r| r.get(0)).unwrap_or(0);
     let queued: i64 = conn.query_row("SELECT count(*) FROM builds WHERE state='queued'", [], |r| r.get(0)).unwrap_or(0);
     let avg: Option<f64> = conn
         .query_row(
             "SELECT avg(finished_ts - dispatched_ts) FROM builds WHERE state='done' AND finished_ts IS NOT NULL AND dispatched_ts IS NOT NULL AND finished_ts > ?1",
-            [now_ts - 86400],
+            [now_ts - DAY_SECS],
             |r| r.get(0),
         )
         .optional().ok().flatten();
@@ -509,7 +562,7 @@ async fn post_build(
     let commit = thingino.commit.clone();
 
     let position: i64 = {
-        let conn = st.db.lock().unwrap();
+        let conn = st.db.lock();
         if !builds_enabled(&conn) {
             return json_uid(StatusCode::SERVICE_UNAVAILABLE, &uid, json!({"error": "builds are temporarily disabled"}));
         }
@@ -544,7 +597,9 @@ async fn post_build(
             log_event(&conn, "rate_limited", None, Some(&uid), Some(&ip), "global hourly limit");
             return json_uid(StatusCode::TOO_MANY_REQUESTS, &uid, json!({"error": format!("the builder is at its hourly limit ({}/hr) — try again later", st.cfg.global_hourly)}));
         }
-        // Builds count toward a limit unless they were cancelled before ever dispatching.
+        // Per-user cap. NB: uid is client-supplied, so this is a soft/UX limit — the
+        // per-IP and global caps are the real enforcement. Builds count toward a limit
+        // unless they were cancelled before ever dispatching.
         let user_n: i64 = conn
             .query_row(
                 "SELECT count(*) FROM builds WHERE uid=?1 AND created_ts > ?2 AND NOT (state='cancelled' AND dispatched_ts IS NULL)",
@@ -598,7 +653,7 @@ async fn get_status(State(st): State<AppState>, Path(build_id): Path<String>) ->
         return json_err(StatusCode::BAD_REQUEST, "bad build_id");
     }
     let now_ts = now();
-    let conn = st.db.lock().unwrap();
+    let conn = st.db.lock();
     let row = conn
         .query_row(
             "SELECT defconfig, state, created_ts, dispatched_ts, finished_ts, cancel_requested FROM builds WHERE id=?1",
@@ -645,11 +700,11 @@ async fn post_cancel(State(st): State<AppState>, headers: HeaderMap, Path(build_
     }
     let uid = resolve_uid(&headers);
     let now_ts = now();
-    let conn = st.db.lock().unwrap();
+    let conn = st.db.lock();
     let row = conn
         .query_row("SELECT uid, state FROM builds WHERE id=?1", [&build_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
         .optional().ok().flatten();
-    let resp = match row {
+    match row {
         None => json_err(StatusCode::NOT_FOUND, "unknown build"),
         Some((owner, _)) if owner != uid => json_err(StatusCode::FORBIDDEN, "not your build"),
         Some((_, state)) if state == "queued" => {
@@ -663,8 +718,7 @@ async fn post_cancel(State(st): State<AppState>, headers: HeaderMap, Path(build_
             json_uid(StatusCode::OK, &uid, json!({"state": "cancelling"}))
         }
         Some(_) => json_uid(StatusCode::OK, &uid, json!({"state": "already finished"})),
-    };
-    resp
+    }
 }
 
 // ---- admin ----------------------------------------------------------------
@@ -677,24 +731,49 @@ struct LoginReq {
 }
 
 /// Exchange the admin token (+ TOTP code when 2FA is configured) for a session token.
-async fn admin_login(State(st): State<AppState>, Json(body): Json<LoginReq>) -> Response {
+async fn admin_login(
+    State(st): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(body): Json<LoginReq>,
+) -> Response {
+    let ip = ip_bucket(client_ip(&headers, peer, &st.cfg.ip_header));
+    // Throttle brute force: too many recent failures from this IP bucket → reject early.
+    {
+        let conn = st.db.lock();
+        let fails: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM events WHERE kind='admin_login_fail' AND ip_bucket=?1 AND ts > ?2",
+                rusqlite::params![ip, now() - LOGIN_FAIL_WINDOW_SECS],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        if fails >= LOGIN_FAIL_MAX {
+            log_event(&conn, "admin_login_throttled", None, None, Some(&ip), "too many failed logins");
+            return json_err(StatusCode::TOO_MANY_REQUESTS, "too many attempts — try again later");
+        }
+    }
     let Some(admin_token) = st.cfg.admin_token.as_deref() else {
         return json_err(StatusCode::SERVICE_UNAVAILABLE, "admin is disabled");
     };
-    if !constant_time_eq(body.token.as_bytes(), admin_token.as_bytes()) {
-        return json_err(StatusCode::UNAUTHORIZED, "invalid credentials");
-    }
     // 2FA is mandatory: no TOTP secret configured → admin is unavailable.
     let Some(secret) = st.cfg.admin_totp_secret.as_deref() else {
         return json_err(StatusCode::SERVICE_UNAVAILABLE, "admin 2FA is not configured");
     };
-    if !totp_check(secret, body.totp.trim()) {
-        return json_err(StatusCode::UNAUTHORIZED, "invalid or missing 2FA code");
+    // One unified failure (don't reveal which factor was wrong).
+    let ok = constant_time_eq(body.token.as_bytes(), admin_token.as_bytes()) && totp_check(secret, body.totp.trim());
+    if !ok {
+        let conn = st.db.lock();
+        log_event(&conn, "admin_login_fail", None, None, Some(&ip), "bad token or 2FA");
+        return json_err(StatusCode::UNAUTHORIZED, "invalid credentials");
     }
     let session = Uuid::new_v4().to_string();
-    let ttl = 8 * 3600;
-    st.sessions.lock().unwrap().insert(session.clone(), now() + ttl);
-    Json(json!({ "session": session, "expires_in": ttl, "totp": st.cfg.admin_totp_secret.is_some() })).into_response()
+    st.sessions.lock().insert(session.clone(), now() + SESSION_TTL_SECS);
+    {
+        let conn = st.db.lock();
+        log_event(&conn, "admin_login_ok", None, None, Some(&ip), "session created");
+    }
+    Json(json!({ "session": session, "expires_in": SESSION_TTL_SECS, "totp": true })).into_response()
 }
 
 async fn admin_stats(State(st): State<AppState>, headers: HeaderMap) -> Response {
@@ -704,13 +783,13 @@ async fn admin_stats(State(st): State<AppState>, headers: HeaderMap) -> Response
     let current = version_string();
     let latest = check_latest_release(&st).await;
     let update_available = latest.as_ref().is_some_and(|l| l != &current);
-    let conn = st.db.lock().unwrap();
+    let conn = st.db.lock();
     let mut counts = serde_json::Map::new();
     for s in ["queued", "running", "done", "failed", "cancelled", "expired"] {
         let n: i64 = conn.query_row("SELECT count(*) FROM builds WHERE state=?1", [s], |r| r.get(0)).unwrap_or(0);
         counts.insert(s.to_string(), json!(n));
     }
-    let last24: i64 = conn.query_row("SELECT count(*) FROM builds WHERE created_ts > ?1", [now() - 86400], |r| r.get(0)).unwrap_or(0);
+    let last24: i64 = conn.query_row("SELECT count(*) FROM builds WHERE created_ts > ?1", [now() - DAY_SECS], |r| r.get(0)).unwrap_or(0);
     let avg: Option<f64> = conn
         .query_row("SELECT avg(finished_ts - dispatched_ts) FROM builds WHERE state='done' AND finished_ts IS NOT NULL AND dispatched_ts IS NOT NULL", [], |r| r.get(0))
         .optional().ok().flatten();
@@ -743,7 +822,7 @@ async fn admin_toggle(State(st): State<AppState>, headers: HeaderMap, Json(body)
     if !session_ok(&headers, &st) {
         return json_err(StatusCode::UNAUTHORIZED, "admin auth required");
     }
-    let conn = st.db.lock().unwrap();
+    let conn = st.db.lock();
     set_setting(&conn, "builds_enabled", if body.enabled { "1" } else { "0" });
     log_event(&conn, "admin_toggle", None, None, None, &format!("builds_enabled={}", body.enabled));
     drop(conn);
@@ -762,13 +841,21 @@ async fn admin_update(State(st): State<AppState>, headers: HeaderMap) -> Respons
     };
     match std::fs::write(path, "update\n") {
         Ok(_) => {
-            let conn = st.db.lock().unwrap();
+            let conn = st.db.lock();
             log_event(&conn, "admin_update", None, None, None, "self-update requested");
             drop(conn);
             Json(json!({ "ok": true, "status": "update requested — the broker will restart on the new image shortly" })).into_response()
         }
         Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &format!("could not write update marker: {e}")),
     }
+}
+
+/// Revoke the current admin session server-side (not just client-side).
+async fn admin_logout(State(st): State<AppState>, headers: HeaderMap) -> Response {
+    if let Some(tok) = bearer(&headers) {
+        st.sessions.lock().remove(tok);
+    }
+    Json(json!({ "ok": true })).into_response()
 }
 
 // ---- query helpers --------------------------------------------------------
@@ -879,14 +966,7 @@ fn query_recent_events(conn: &Connection, limit: i64) -> Vec<serde_json::Value> 
 
 async fn fetch_commit(st: &AppState) -> Option<String> {
     let url = format!("https://api.github.com/repos/{}/commits/{}", st.cfg.thingino_repo, st.cfg.thingino_ref);
-    match st
-        .http
-        .get(&url)
-        .header("Accept", "application/vnd.github+json")
-        .header("X-GitHub-Api-Version", "2022-11-28")
-        .send()
-        .await
-    {
+    match gh(st.http.get(&url)).send().await {
         Ok(r) => r.json::<serde_json::Value>().await.ok().and_then(|v| v["sha"].as_str().map(|s| s.to_string())),
         Err(_) => None,
     }
@@ -900,17 +980,7 @@ fn valid_board(n: &str) -> bool {
 /// Dir names (board folders) under configs/<subdir> at a commit.
 async fn fetch_camera_dir(st: &AppState, commit: &str, subdir: &str) -> Option<Vec<String>> {
     let url = format!("https://api.github.com/repos/{}/contents/configs/{}?ref={}", st.cfg.thingino_repo, subdir, commit);
-    let v: serde_json::Value = st
-        .http
-        .get(&url)
-        .header("Accept", "application/vnd.github+json")
-        .header("X-GitHub-Api-Version", "2022-11-28")
-        .send()
-        .await
-        .ok()?
-        .json()
-        .await
-        .ok()?;
+    let v: serde_json::Value = gh(st.http.get(&url)).send().await.ok()?.json().await.ok()?;
     let list: Vec<String> = v
         .as_array()?
         .iter()
@@ -943,14 +1013,14 @@ async fn fetch_defconfigs(st: &AppState, commit: &str) -> Option<Vec<String>> {
 /// last-good (seeded from defconfigs.json) cache is kept.
 async fn resolve_thingino(st: &AppState) -> Thingino {
     {
-        let t = st.thingino.lock().unwrap();
-        if t.commit.is_some() && now() - t.fetched_at < 120 {
+        let t = st.thingino.lock();
+        if t.commit.is_some() && now() - t.fetched_at < THINGINO_CACHE_SECS {
             return t.clone();
         }
     }
     let commit = fetch_commit(st).await;
     let need_list = {
-        let t = st.thingino.lock().unwrap();
+        let t = st.thingino.lock();
         match (&commit, &t.list_commit) {
             (Some(c), Some(lc)) => c != lc,
             (Some(_), None) => true,
@@ -961,7 +1031,7 @@ async fn resolve_thingino(st: &AppState) -> Thingino {
         (Some(c), true) => fetch_defconfigs(st, c).await.map(|l| (l, c.clone())),
         _ => None,
     };
-    let mut t = st.thingino.lock().unwrap();
+    let mut t = st.thingino.lock();
     if let Some(c) = commit {
         t.commit = Some(c);
         t.fetched_at = now();
@@ -984,8 +1054,13 @@ async fn scheduler_loop(st: AppState) {
     let mut tick = tokio::time::interval(Duration::from_secs(10));
     loop {
         tick.tick().await;
-        if let Err(e) = scheduler_step(&st).await {
-            tracing::warn!("scheduler step error: {e}");
+        // Isolate each step in its own task: a panic surfaces as a logged JoinError
+        // instead of permanently killing the scheduler for the rest of the process.
+        let st2 = st.clone();
+        match tokio::spawn(async move { scheduler_step(&st2).await }).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => tracing::warn!("scheduler step error: {e}"),
+            Err(e) => tracing::error!("scheduler step panicked: {e}"),
         }
     }
 }
@@ -997,14 +1072,19 @@ struct RunRow {
     conclusion: Option<String>,
 }
 
+/// (id, run_id, dispatched_ts, cancel_requested)
+type RunningBuild = (String, Option<i64>, i64, bool);
+/// (id, defconfig, commit_sha)
+type QueuedBuild = (String, String, Option<String>);
+
 async fn scheduler_step(st: &AppState) -> anyhow::Result<()> {
     let now_ts = now();
     let _ = resolve_thingino(st).await; // keep commit + defconfig list warm (picks up new boards)
 
     // 1) Snapshot running builds + the next queued builds to dispatch.
-    let (running, to_dispatch): (Vec<(String, Option<i64>, i64, bool)>, Vec<(String, String, Option<String>)>) = {
-        let conn = st.db.lock().unwrap();
-        let running: Vec<(String, Option<i64>, i64, bool)> = {
+    let (running, to_dispatch): (Vec<RunningBuild>, Vec<QueuedBuild>) = {
+        let conn = st.db.lock();
+        let running: Vec<RunningBuild> = {
             let mut stmt = conn.prepare("SELECT id, run_id, dispatched_ts, cancel_requested FROM builds WHERE state='running'")?;
             let rows = stmt
                 .query_map([], |r| {
@@ -1019,7 +1099,7 @@ async fn scheduler_step(st: &AppState) -> anyhow::Result<()> {
             rows
         };
         let slots = (st.cfg.max_concurrent - running.len() as i64).max(0);
-        let to_dispatch: Vec<(String, String, Option<String>)> = if slots > 0 {
+        let to_dispatch: Vec<QueuedBuild> = if slots > 0 {
             let mut q = conn.prepare("SELECT id, defconfig, commit_sha FROM builds WHERE state='queued' ORDER BY created_ts ASC LIMIT ?1")?;
             let rows = q
                 .query_map([slots], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?)))?
@@ -1046,7 +1126,7 @@ async fn scheduler_step(st: &AppState) -> anyhow::Result<()> {
             match matched {
                 Some(r) if r.status == "completed" => {
                     let _ = delete_run(st, r.run_id).await; // wipe the cancelled run + its logs now, not at retention
-                    let conn = st.db.lock().unwrap();
+                    let conn = st.db.lock();
                     conn.execute("UPDATE builds SET state='cancelled', finished_ts=?2, run_id=NULL WHERE id=?1", rusqlite::params![id, now_ts]).ok();
                     log_event(&conn, "cancelled", Some(id), None, None, "run stopped + deleted");
                 }
@@ -1054,7 +1134,7 @@ async fn scheduler_step(st: &AppState) -> anyhow::Result<()> {
                     let _ = cancel_run(st, r.run_id).await; // run still active — (re)request cancellation
                 }
                 None => {
-                    let conn = st.db.lock().unwrap();
+                    let conn = st.db.lock();
                     conn.execute("UPDATE builds SET state='cancelled', finished_ts=?2 WHERE id=?1", rusqlite::params![id, now_ts]).ok();
                     log_event(&conn, "cancelled", Some(id), None, None, "cancelled (run not found)");
                 }
@@ -1065,7 +1145,7 @@ async fn scheduler_step(st: &AppState) -> anyhow::Result<()> {
         match matched {
             Some(r) => {
                 if run_id_opt.is_none() {
-                    let conn = st.db.lock().unwrap();
+                    let conn = st.db.lock();
                     conn.execute("UPDATE builds SET run_id=?2 WHERE id=?1", rusqlite::params![id, r.run_id]).ok();
                 }
                 if r.status == "completed" {
@@ -1074,14 +1154,14 @@ async fn scheduler_step(st: &AppState) -> anyhow::Result<()> {
                         Some("cancelled") => "cancelled",
                         _ => "failed",
                     };
-                    let conn = st.db.lock().unwrap();
+                    let conn = st.db.lock();
                     conn.execute("UPDATE builds SET state=?2, finished_ts=?3 WHERE id=?1", rusqlite::params![id, new_state, now_ts]).ok();
                     log_event(&conn, new_state, Some(id), None, None, &format!("run {} {}", r.run_id, r.conclusion.as_deref().unwrap_or("?")));
                 }
             }
             None => {
                 if now_ts - dispatched_ts > st.cfg.build_timeout_secs {
-                    let conn = st.db.lock().unwrap();
+                    let conn = st.db.lock();
                     conn.execute("UPDATE builds SET state='failed', finished_ts=?2 WHERE id=?1", rusqlite::params![id, now_ts]).ok();
                     log_event(&conn, "failed", Some(id), None, None, "timed out / run not found");
                 }
@@ -1092,7 +1172,7 @@ async fn scheduler_step(st: &AppState) -> anyhow::Result<()> {
     // 4) Dispatch from the queue into free slots.
     for (id, defconfig, commit) in &to_dispatch {
         let still_queued: bool = {
-            let conn = st.db.lock().unwrap();
+            let conn = st.db.lock();
             conn.query_row("SELECT 1 FROM builds WHERE id=?1 AND state='queued'", [id], |_| Ok(())).optional().ok().flatten().is_some()
         };
         if !still_queued {
@@ -1100,12 +1180,12 @@ async fn scheduler_step(st: &AppState) -> anyhow::Result<()> {
         }
         match dispatch_build(st, id, defconfig, commit.as_deref()).await {
             Ok(()) => {
-                let conn = st.db.lock().unwrap();
+                let conn = st.db.lock();
                 conn.execute("UPDATE builds SET state='running', dispatched_ts=?2 WHERE id=?1", rusqlite::params![id, now()]).ok();
                 log_event(&conn, "dispatched", Some(id), None, None, defconfig);
             }
             Err(e) => {
-                let conn = st.db.lock().unwrap();
+                let conn = st.db.lock();
                 conn.execute("UPDATE builds SET attempts=attempts+1 WHERE id=?1", [id]).ok();
                 let attempts: i64 = conn.query_row("SELECT attempts FROM builds WHERE id=?1", [id], |r| r.get(0)).unwrap_or(0);
                 if attempts >= 3 {
@@ -1119,7 +1199,7 @@ async fn scheduler_step(st: &AppState) -> anyhow::Result<()> {
 
     // 5) Reap finished builds past their retention window.
     let reap: Vec<(String, String, Option<i64>, i64)> = {
-        let conn = st.db.lock().unwrap();
+        let conn = st.db.lock();
         let mut stmt = conn.prepare("SELECT id, state, run_id, finished_ts FROM builds WHERE state IN ('done','failed','cancelled') AND finished_ts IS NOT NULL")?;
         let rows = stmt
             .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<i64>>(2)?, r.get::<_, i64>(3)?)))?
@@ -1133,15 +1213,27 @@ async fn scheduler_step(st: &AppState) -> anyhow::Result<()> {
         if !expired {
             continue;
         }
-        if state == "done" {
-            let _ = delete_release_assets(st, &id).await;
+        // Only mark expired once GitHub cleanup actually succeeded, so a transient
+        // failure is retried next tick instead of orphaning the asset/run.
+        let asset_ok = if state == "done" { delete_release_assets(st, &id).await.is_ok() } else { true };
+        let run_ok = match run_id {
+            Some(rid) => delete_run(st, rid).await.is_ok(),
+            None => true,
+        };
+        if asset_ok && run_ok {
+            let conn = st.db.lock();
+            conn.execute("UPDATE builds SET state='expired' WHERE id=?1", [&id]).ok();
+            log_event(&conn, "expired", Some(&id), None, None, &format!("reaped {state}: asset+run removed"));
+        } else {
+            tracing::warn!("reap of {id} incomplete (asset_ok={asset_ok} run_ok={run_ok}); will retry");
         }
-        if let Some(rid) = run_id {
-            let _ = delete_run(st, rid).await;
-        }
-        let conn = st.db.lock().unwrap();
-        conn.execute("UPDATE builds SET state='expired' WHERE id=?1", [&id]).ok();
-        log_event(&conn, "expired", Some(&id), None, None, &format!("reaped {state}: asset+run removed"));
+    }
+
+    // 6) Prune to keep the DB bounded: long-expired build rows + old audit events.
+    {
+        let conn = st.db.lock();
+        let _ = conn.execute("DELETE FROM builds WHERE state='expired' AND finished_ts < ?1", [now_ts - EXPIRED_BUILD_TTL_SECS]);
+        let _ = conn.execute("DELETE FROM events WHERE ts < ?1", [now_ts - EVENT_TTL_SECS]);
     }
 
     Ok(())
@@ -1152,16 +1244,7 @@ async fn fetch_runs(st: &AppState) -> anyhow::Result<Vec<RunRow>> {
         "https://api.github.com/repos/{}/actions/runs?per_page=50&event=repository_dispatch",
         st.cfg.github_repo
     );
-    let v: serde_json::Value = st
-        .http
-        .get(&url)
-        .bearer_auth(github_token(st).await)
-        .header("Accept", "application/vnd.github+json")
-        .header("X-GitHub-Api-Version", "2022-11-28")
-        .send()
-        .await?
-        .json()
-        .await?;
+    let v: serde_json::Value = gh(st.http.get(&url).bearer_auth(github_token(st).await)).send().await?.json().await?;
     let mut out = vec![];
     if let Some(arr) = v["workflow_runs"].as_array() {
         for r in arr {
@@ -1181,7 +1264,7 @@ async fn fetch_runs(st: &AppState) -> anyhow::Result<Vec<RunRow>> {
 async fn github_token(st: &AppState) -> String {
     if st.cfg.app_mode {
         {
-            let c = st.installation_token.lock().unwrap();
+            let c = st.installation_token.lock();
             if let Some(t) = &c.0 {
                 if now() < c.1 {
                     return t.clone();
@@ -1190,7 +1273,7 @@ async fn github_token(st: &AppState) -> String {
         }
         match mint_installation_token(st).await {
             Ok((tok, exp)) => {
-                *st.installation_token.lock().unwrap() = (Some(tok.clone()), exp);
+                *st.installation_token.lock() = (Some(tok.clone()), exp);
                 return tok;
             }
             Err(e) => tracing::error!("GitHub App token mint failed: {e}"),
@@ -1217,14 +1300,7 @@ async fn mint_installation_token(st: &AppState) -> anyhow::Result<(String, i64)>
     let jwt = encode(&Header::new(Algorithm::RS256), &claims, &EncodingKey::from_rsa_pem(pem)?)?;
 
     let url = format!("https://api.github.com/app/installations/{inst}/access_tokens");
-    let resp = st
-        .http
-        .post(&url)
-        .bearer_auth(&jwt)
-        .header("Accept", "application/vnd.github+json")
-        .header("X-GitHub-Api-Version", "2022-11-28")
-        .send()
-        .await?;
+    let resp = gh(st.http.post(&url).bearer_auth(&jwt)).send().await?;
     if !resp.status().is_success() {
         let code = resp.status();
         let body = resp.text().await.unwrap_or_default();
@@ -1232,33 +1308,25 @@ async fn mint_installation_token(st: &AppState) -> anyhow::Result<(String, i64)>
     }
     let v: serde_json::Value = resp.json().await?;
     let token = v["token"].as_str().ok_or_else(|| anyhow::anyhow!("no token in response"))?.to_string();
-    Ok((token, nowt + 3300)) // ~1h tokens; refresh at 55 min
+    Ok((token, nowt + TOKEN_REFRESH_SECS)) // ~1h tokens; refresh before expiry
 }
 
 /// Latest published release tag (e.g. "v1.2.0"), cached ~10 min; None if no release yet.
 async fn check_latest_release(st: &AppState) -> Option<String> {
     {
-        let c = st.latest_release.lock().unwrap();
-        if now() - c.1 < 600 {
+        let c = st.latest_release.lock();
+        if now() - c.1 < RELEASE_CACHE_SECS {
             return c.0.clone();
         }
     }
     let url = format!("https://api.github.com/repos/{}/releases/latest", st.cfg.github_repo);
-    let tag = match st
-        .http
-        .get(&url)
-        .bearer_auth(github_token(st).await)
-        .header("Accept", "application/vnd.github+json")
-        .header("X-GitHub-Api-Version", "2022-11-28")
-        .send()
-        .await
-    {
+    let tag = match gh(st.http.get(&url).bearer_auth(github_token(st).await)).send().await {
         Ok(r) if r.status().is_success() => {
             r.json::<serde_json::Value>().await.ok().and_then(|v| v["tag_name"].as_str().map(str::to_string))
         }
         _ => None,
     };
-    *st.latest_release.lock().unwrap() = (tag.clone(), now());
+    *st.latest_release.lock() = (tag.clone(), now());
     tag
 }
 
@@ -1271,15 +1339,7 @@ async fn dispatch_build(st: &AppState, build_id: &str, defconfig: &str, commit: 
         cp.insert("commit".into(), json!(c));
     }
     let payload = json!({ "event_type": "web-build", "client_payload": cp });
-    let resp = st
-        .http
-        .post(&url)
-        .bearer_auth(github_token(st).await)
-        .header("Accept", "application/vnd.github+json")
-        .header("X-GitHub-Api-Version", "2022-11-28")
-        .json(&payload)
-        .send()
-        .await?;
+    let resp = gh(st.http.post(&url).bearer_auth(github_token(st).await)).json(&payload).send().await?;
     if resp.status().is_success() {
         Ok(())
     } else {
@@ -1291,59 +1351,47 @@ async fn dispatch_build(st: &AppState, build_id: &str, defconfig: &str, commit: 
 
 async fn cancel_run(st: &AppState, run_id: i64) -> anyhow::Result<()> {
     let url = format!("https://api.github.com/repos/{}/actions/runs/{}/cancel", st.cfg.github_repo, run_id);
-    let _ = st
-        .http
-        .post(&url)
-        .bearer_auth(github_token(st).await)
-        .header("Accept", "application/vnd.github+json")
-        .header("X-GitHub-Api-Version", "2022-11-28")
-        .send()
-        .await;
+    let _ = gh(st.http.post(&url).bearer_auth(github_token(st).await)).send().await;
     Ok(())
 }
 
 async fn delete_run(st: &AppState, run_id: i64) -> anyhow::Result<()> {
     let url = format!("https://api.github.com/repos/{}/actions/runs/{}", st.cfg.github_repo, run_id);
-    let _ = st
-        .http
-        .delete(&url)
-        .bearer_auth(github_token(st).await)
-        .header("Accept", "application/vnd.github+json")
-        .header("X-GitHub-Api-Version", "2022-11-28")
-        .send()
-        .await;
-    Ok(())
+    let resp = gh(st.http.delete(&url).bearer_auth(github_token(st).await)).send().await?;
+    // 204 on success; 404 = already gone — both are fine.
+    if resp.status().is_success() || resp.status() == reqwest::StatusCode::NOT_FOUND {
+        Ok(())
+    } else {
+        anyhow::bail!("delete run {run_id}: {}", resp.status())
+    }
 }
 
 async fn delete_release_assets(st: &AppState, build_id: &str) -> anyhow::Result<()> {
     let url = format!("https://api.github.com/repos/{}/releases/tags/{}", st.cfg.github_repo, st.cfg.rolling_tag);
-    let v: serde_json::Value = st
-        .http
-        .get(&url)
-        .bearer_auth(github_token(st).await)
-        .header("Accept", "application/vnd.github+json")
-        .header("X-GitHub-Api-Version", "2022-11-28")
-        .send()
-        .await?
-        .json()
-        .await?;
+    let resp = gh(st.http.get(&url).bearer_auth(github_token(st).await)).send().await?;
+    if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(()); // no rolling release yet → nothing to delete
+    }
+    let v: serde_json::Value = resp.error_for_status()?.json().await?;
     let targets = [format!("{build_id}.bin"), format!("{build_id}.bin.sha256sum")];
+    let mut all_ok = true;
     if let Some(assets) = v["assets"].as_array() {
         for a in assets {
             if let (Some(name), Some(aid)) = (a["name"].as_str(), a["id"].as_i64()) {
                 if targets.iter().any(|t| t == name) {
                     let durl = format!("https://api.github.com/repos/{}/releases/assets/{}", st.cfg.github_repo, aid);
-                    let _ = st
-                        .http
-                        .delete(&durl)
-                        .bearer_auth(github_token(st).await)
-                        .header("Accept", "application/vnd.github+json")
-                        .header("X-GitHub-Api-Version", "2022-11-28")
-                        .send()
-                        .await;
+                    let ok = match gh(st.http.delete(&durl).bearer_auth(github_token(st).await)).send().await {
+                        Ok(r) => r.status().is_success() || r.status() == reqwest::StatusCode::NOT_FOUND,
+                        Err(_) => false,
+                    };
+                    all_ok &= ok;
                 }
             }
         }
     }
-    Ok(())
+    if all_ok {
+        Ok(())
+    } else {
+        anyhow::bail!("some asset deletes failed for {build_id}")
+    }
 }
