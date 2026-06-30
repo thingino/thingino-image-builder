@@ -115,9 +115,11 @@ curl -s localhost:8787/api/defconfigs | head
 
 ## Trade-offs vs the VPS
 
-- Dispatch and cancel are **inline (instant)**. Run-completion detection rides the
-  1-min cron — negligible against a ~30-min build; a Durable Object alarm could poll
-  faster if ever needed.
+- **Starting and cancelling a build are instant** — the click hits GitHub inline.
+  The 1-min cron only does passive sync: *noticing* a build has **finished** (→ mark
+  it done, show the download) and dispatching a **queued** build once a slot frees.
+  Each of those can lag ≤1 min — invisible against a 20–40 min build. (A Durable
+  Object alarm could do it faster if ever needed.)
 - Rate-limit checks are count-then-insert on D1 (no single-mutex), so a burst can
   exceed a cap by 1–2. A Durable Object would give strict caps.
 - No container to self-update — "update" is `git push` (CI runs `wrangler deploy`).
