@@ -4,7 +4,7 @@ A public, rate-limited **web firmware builder** for
 [thingino](https://github.com/themactep/thingino-firmware). Pick a camera
 defconfig in the browser, submit, and it builds on **GitHub Actions** — no build
 compute on the server. A small Rust broker orchestrates; the heavy lifting is
-free CI.
+done by the CI.
 
 ## How it works
 
@@ -24,7 +24,7 @@ browser ──POST /api/build──▶ Rust broker ──repository_dispatch─�
 
 ## Features
 
-- **Defconfig picker** over all ~167 camera profiles; shows the exact thingino
+- **Defconfig picker** over every thingino camera profile; shows the exact
   commit being built.
 - **Dedup** — an identical `(defconfig, commit)` that's in flight or built within
   the window is reused, not rebuilt.
