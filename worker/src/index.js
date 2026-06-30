@@ -538,6 +538,10 @@ async function handleAdminStats(request, env) {
     avg_build_secs: avg && avg.a ? Math.round(avg.a) : null,
     max_concurrent: cfg.maxConcurrent, retention_secs: cfg.retention,
     limits: { userHourly: cfg.userHourly, ipHourly: cfg.ipHourly, globalHourly: cfg.globalHourly, maxConcurrent: cfg.maxConcurrent, maxQueue: cfg.maxQueue, retention: cfg.retention },
+    usage: {
+      globalHourly: await countQ(env, "SELECT count(*) c FROM builds WHERE created_ts > ? AND NOT (state='cancelled' AND dispatched_ts IS NULL)", Math.max(nowSec() - WINDOW, parseInt((await getSetting(env, "limits_reset_ts")) || "0", 10))),
+      maxConcurrent: counts.running, maxQueue: counts.queued,
+    },
     recent_builds: builds, recent_events: events,
     version: env.VERSION || "v0.1.0", latest_version: null, update_available: false,
   }, 200, env);

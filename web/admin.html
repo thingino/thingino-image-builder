@@ -146,7 +146,7 @@ async function refresh(){
     $('upd-badge').innerHTML=d.latest_version?'<span class="text-success small ms-1">up to date</span>':'';
     $('upd-btn').style.display='none';
   }
-  renderLimits(d.limits);
+  renderLimits(d.limits, d.usage);
   const c=d.counts||{};
   $('tiles').innerHTML=[['running',c.running],['queued',c.queued],['done',c.done],['failed',c.failed],['cancelled',c.cancelled],['expired',c.expired],['24h',d.last24h],['avg build',d.avg_build_secs?Math.round(d.avg_build_secs/60)+'m':'—']].map(([l,n])=>tile(l,n)).join('');
   $('builds-body').innerHTML=(d.recent_builds||[]).map(b=>`<tr><td><code>${esc(short(b.build_id))}</code></td><td>${esc(b.defconfig)}</td><td>${pill(b.state)}${buildAction(b)}</td><td><code>${esc(short(b.uid))}</code></td><td>${ipcell(b.ip,b.ip_bucket)}</td><td>${ago(b.created_ts)}</td><td>${dur(b.dispatched_ts,b.finished_ts)}</td><td><code>${esc(b.run_id)}</code></td></tr>`).join('');
@@ -156,15 +156,16 @@ async function refresh(){
 async function toggle(){ await fetch(API+'/api/admin/toggle',{method:'POST',headers:{Authorization:'Bearer '+tok(),'content-type':'application/json'},body:JSON.stringify({enabled:!enabled})}); refresh(); }
 async function clearLogs(){ if(!confirm('Delete all audit events?')) return; await fetch(API+'/api/admin/clear-logs',{method:'POST',headers:{Authorization:'Bearer '+tok()}}); refresh(); }
 async function resetLimits(){ if(!confirm('Reset all hourly rate-limit counts?')) return; const r=await fetch(API+'/api/admin/reset-limits',{method:'POST',headers:{Authorization:'Bearer '+tok()}}); if(r.ok) $('kill-extra').textContent='hourly limits reset'; refresh(); }
-let lastLimits=null, editingLimits=false;
-const fmtLimits=L=>`<code>${L.userHourly}</code> /user·hr · <code>${L.ipHourly}</code> /IP·hr · <code>${L.globalHourly}</code> /hr global · <code>${L.maxConcurrent}</code> concurrent · queue <code>${L.maxQueue}</code> · retention <code>${Math.round(L.retention/60)}</code> min`;
-function renderLimits(L){ if(!L) return; lastLimits=L; if(!editingLimits) $('limits-view').innerHTML=fmtLimits(L); }
+let lastLimits=null, lastUsage=null, editingLimits=false;
+const fmtLimits=(L,U)=>{ const pair=(u,m)=> U ? `<code>${u}</code> / <code>${m}</code>` : `<code>${m}</code>`;
+  return `per-user/hr <code>${L.userHourly}</code> · per-IP/hr <code>${L.ipHourly}</code> · global/hr ${pair(U&&U.globalHourly,L.globalHourly)} · concurrent ${pair(U&&U.maxConcurrent,L.maxConcurrent)} · queue ${pair(U&&U.maxQueue,L.maxQueue)} · retention <code>${Math.round(L.retention/60)}</code> min`; };
+function renderLimits(L,U){ if(!L) return; lastLimits=L; lastUsage=U; if(!editingLimits) $('limits-view').innerHTML=fmtLimits(L,U); }
 function editLimits(){ const L=lastLimits; if(!L) return; editingLimits=true; $('limits-msg').textContent='';
   $('lim-userHourly').value=L.userHourly; $('lim-ipHourly').value=L.ipHourly; $('lim-globalHourly').value=L.globalHourly; $('lim-maxConcurrent').value=L.maxConcurrent; $('lim-maxQueue').value=L.maxQueue; $('lim-retention').value=Math.round(L.retention/60);
   $('limits-view').style.display='none'; $('limits-edit').style.display='none'; $('limits-fields').style.display=''; $('limits-save').style.display=''; $('limits-cancel').style.display=''; }
 function viewLimits(){ editingLimits=false;
   $('limits-view').style.display=''; $('limits-edit').style.display=''; $('limits-fields').style.display='none'; $('limits-save').style.display='none'; $('limits-cancel').style.display='none';
-  if(lastLimits) $('limits-view').innerHTML=fmtLimits(lastLimits); }
+  if(lastLimits) $('limits-view').innerHTML=fmtLimits(lastLimits,lastUsage); }
 async function saveLimits(){ const v=id=>parseInt($(id).value,10);
   const body={userHourly:v('lim-userHourly'),ipHourly:v('lim-ipHourly'),globalHourly:v('lim-globalHourly'),maxConcurrent:v('lim-maxConcurrent'),maxQueue:v('lim-maxQueue'),retention:Math.max(60,v('lim-retention')*60)};
   $('limits-msg').textContent='saving…';
