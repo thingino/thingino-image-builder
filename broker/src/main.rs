@@ -613,10 +613,12 @@ async fn admin_login(State(st): State<AppState>, Json(body): Json<LoginReq>) -> 
     if !constant_time_eq(body.token.as_bytes(), admin_token.as_bytes()) {
         return json_err(StatusCode::UNAUTHORIZED, "invalid credentials");
     }
-    if let Some(secret) = st.cfg.admin_totp_secret.as_deref() {
-        if !totp_check(secret, body.totp.trim()) {
-            return json_err(StatusCode::UNAUTHORIZED, "invalid or missing 2FA code");
-        }
+    // 2FA is mandatory: no TOTP secret configured → admin is unavailable.
+    let Some(secret) = st.cfg.admin_totp_secret.as_deref() else {
+        return json_err(StatusCode::SERVICE_UNAVAILABLE, "admin 2FA is not configured");
+    };
+    if !totp_check(secret, body.totp.trim()) {
+        return json_err(StatusCode::UNAUTHORIZED, "invalid or missing 2FA code");
     }
     let session = Uuid::new_v4().to_string();
     let ttl = 8 * 3600;
