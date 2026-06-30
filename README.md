@@ -38,9 +38,12 @@ browser ──POST /api/build──▶ Rust broker ──repository_dispatch─�
   **live limit editing** (with usage), per-build **cancel / remove**, **clear logs
   / finished builds**, **named admin accounts** (invite-link self-enrollment,
   PBKDF2 passwords, per-user TOTP) with a **master break-glass** token, and an
-  audit log of *who* did what — all behind **2FA**. Both deploy paths carry the
-  full set; the **VPS** broker additionally offers one-click container
-  **self-update** (the Worker deploys via `git push`).
+  audit log of *who* did what — all behind **single-use 2FA**. Sensitive actions
+  (kill switch, limit editing, clearing logs/builds, reset) are **privilege-gated**
+  per admin — new admins start with **none**, the master grants each — and the
+  Pages UI ships a strict **CSP** (`script-src 'self'`) as an XSS backstop. Both
+  deploy paths carry the full set; the **VPS** broker additionally offers one-click
+  container **self-update** (the Worker deploys via `git push`).
 - **GitHub auth** via static token **or a GitHub App** (both paths) — the broker
   mints its own short-lived installation tokens, so builds are attributed to the
   app/bot and nothing long-lived sits on the box.

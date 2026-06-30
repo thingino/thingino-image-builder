@@ -18,8 +18,10 @@ Server-issued identity; per-user / per-IP (/64, via `CF-Connecting-IP`) / global
 hourly limits; FIFO queue + concurrency cap; `(defconfig, commit)` dedup;
 `repository_dispatch`; run correlation; cancel; retention reaper + DB pruning;
 audit events; and a full **admin panel** (named admins + master break-glass, all
-2FA-enforced; kill switch, live limit editing, per-build cancel/remove, clear logs,
-live stats) — sessions in D1. See **[Admin](#admin)** below.
+2FA-enforced with **single-use** codes; sensitive actions — kill switch, live limit
+editing, clear logs/builds, reset limits — are **privilege-gated** per admin, while
+per-build cancel/remove + live stats stay open) — sessions in D1. See
+**[Admin](#admin)** below.
 
 **GitHub auth** is dual-mode: if a **GitHub App** is configured (`GITHUB_APP_ID` +
 `GITHUB_APP_INSTALLATION_ID` vars + `GITHUB_APP_PRIVATE_KEY` secret), the Worker
@@ -75,7 +77,9 @@ CI stamps the build via `--var VERSION:"v0.1.0-<sha>"`, shown in the footer and
 Pages site calls the Worker cross-origin. CORS is `*`; identity is header-based
 (`X-Builder-Uid` + a localStorage mirror), so no cookies are needed cross-origin.
 Assets use relative paths, so it works both at the project URL
-(`<org>.github.io/<repo>/`) and at a custom domain.
+(`<org>.github.io/<repo>/`) and at a custom domain. The page also ships a strict
+**Content-Security-Policy** (`script-src 'self'`, etc.) as an XSS backstop, with all
+scripts external (`app.js` / `admin.js`) since Pages can't supply CSP nonces.
 
 **Custom domain** (the `webflash.thingino.com` model — no Cloudflare DNS required):
 add a `CNAME` DNS record at your registrar (`web-builder.thingino.com → <org>.github.io`)
@@ -92,14 +96,21 @@ and uncomment the `CNAME` line in `pages.yml`.
   table is wiped or you lock yourself out, and it's the only login that can manage
   users. Click *"Use master token instead"* on the sign-in screen.
 
-**Operational actions** (any admin): enable/disable builds, edit **limits** (live,
-no redeploy) with usage shown, **clear logs**, **clear finished builds**, **reset
-limits**, cancel any build, remove a finished build's artifact + run early, live
-stats / recent builds + events.
+**Open to any admin**: cancel any build, remove a finished build's artifact + run
+early, live stats / recent builds + events.
+
+**Privilege-gated**: the **kill switch** (enable/disable builds), edit **limits**
+(live, no redeploy, usage shown), **clear logs**, **clear finished builds**, **reset
+limits** — a named admin can run each only if granted that privilege (new admins
+start with **none**); the master always can, and grants them via checkboxes in the
+Users card.
 
 **User management** (master only): invite a username → you get a one-time link
 (60 min). The new admin opens it, scans the **QR** into their authenticator, sets
-their own password, and is enrolled — the master never sees their password. Admins
+their own password, and is enrolled — the master never sees their password. If the
+one-time link is lost before enrollment, click the **"invited"** state in the Users
+card to re-show it (copy button + expiry) instead of deleting and re-inviting. The
+master also grants each admin's **privileges** via the Users-card checkboxes. Admins
 can be listed and removed (removal also kills their sessions). Sessions carry the
 identity, so the audit log records **who** did each action.
 
