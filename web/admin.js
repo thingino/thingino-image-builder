@@ -97,11 +97,15 @@ async function renderUsers(){
   const r=await fetch(API+'/api/admin/users',{headers:{Authorization:'Bearer '+tok()}});
   if(!r.ok) return; const d=await r.json().catch(()=>({}));
   $('users-body').innerHTML=(d.users||[]).map(u=>`<tr><td><code>${esc(u.username)}</code></td><td>${u.invite_token?`<a href="#" class="show-invite" data-u="${esc(u.username)}" data-t="${esc(u.invite_token)}" data-e="${u.invite_expires||0}" title="show the invite link again">invited</a>`:esc(u.state)}</td><td class="muted">${u.last_login?ago(u.last_login):'never'}</td><td>${privCell(u)}</td><td><a href="#" class="deluser text-danger small" data-u="${esc(u.username)}">remove</a></td></tr>`).join('') || '<tr><td colspan="5" class="muted small">No admin users yet — invite one above.</td></tr>';
+  // Drop a shown invite link once its user is no longer a pending invite (removed / enrolled / expired).
+  const il=$('invite-link'), shown=il.dataset.user;
+  if(shown && !(d.users||[]).some(u=>u.username===shown&&u.invite_token)){ il.innerHTML=''; delete il.dataset.user; }
 }
 function showInviteLink(username, token, expires){
   const link=location.origin+location.pathname+'?invite='+token;
   const mins=expires?Math.max(0,Math.round((expires-Math.floor(Date.now()/1000))/60)):60;
   $('invite-link').innerHTML=`Invite for <code>${esc(username)}</code> (expires in ${mins} min) — send them this private link:<br><code style="word-break:break-all">${esc(link)}</code> <button class="btn btn-sm btn-outline-secondary ms-1" id="copy-invite">copy</button>`;
+  $('invite-link').dataset.user=username;  // remember whose link is shown, so removing that user can clear it
   const cb=$('copy-invite'); if(cb) cb.onclick=()=>{ navigator.clipboard.writeText(link).then(()=>{cb.textContent='copied';}); };
 }
 async function invite(){
@@ -159,6 +163,7 @@ document.addEventListener('click',async ev=>{ const x=ev.target.closest('.bact')
 document.addEventListener('click',async ev=>{ const x=ev.target.closest('.deluser'); if(!x) return; ev.preventDefault();
   const u=x.dataset.u; if(!confirm('Remove admin "'+u+'"? They are signed out immediately.')) return;
   await fetch(API+'/api/admin/users/'+encodeURIComponent(u),{method:'DELETE',headers:{Authorization:'Bearer '+tok()}});
+  const il=$('invite-link'); if(il.dataset.user===u){ il.innerHTML=''; delete il.dataset.user; }  // drop the shown link if it was this user's
   renderUsers(); });
 // Click a pending "invited" admin to re-show its (still-valid) invite link.
 document.addEventListener('click',ev=>{ const x=ev.target.closest('.show-invite'); if(!x) return; ev.preventDefault();
