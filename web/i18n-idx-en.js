@@ -1,6 +1,6 @@
-// English baseline strings for the public builder page — single source of keys.
+// English baseline strings for the public builder page: single source of keys.
 I18N.add("en", {
-  // index.html — static
+  // index.html: static
   page_title: "thingino · Firmware Builder",
   header_full: " Thingino Firmware Builder",
   header_short: " Thingino Builder",
@@ -13,11 +13,11 @@ I18N.add("en", {
   footer_limits: "Builds run on GitHub Actions (~20–40 min), so please be patient. User limits: <strong>2 builds/hour</strong> per user, <strong>6</strong> total at a time. Finished images are available to download for <strong>30 minutes</strong>, then they're removed.",
   footer_link: "thingino firmware builder",
   admin_link: "admin",
-  // app.js — dynamic
+  // app.js: dynamic
   min_approx: "~{n} min",
   not_known_defconfig: "Not a known defconfig.",
   profiles_available: "{n} camera profiles available.",
-  cameras_load_failed: "Could not load camera list — is the broker up?",
+  cameras_load_failed: "Could not load camera list, is the broker up?",
   stats_building: "building",
   stats_queued: "queued",
   stats_typical: "typical build",
@@ -27,11 +27,11 @@ I18N.add("en", {
   meta_build_id: "build id",
   deduped_note: "reused an existing identical image",
   state_queued: "Queued",
-  queued_position: "— position {n}",
+  queued_position: "(position {n})",
   cancel_btn: "Cancel",
   state_building: "Building…",
   state_cancelling: "Cancelling…",
-  cancelling_note: "stopping the build — this can take a moment",
+  cancelling_note: "stopping the build, this can take a moment",
   state_done: "Build ready",
   download_btn: "Download .bin",
   build_another_btn: "Build another",
@@ -51,12 +51,12 @@ I18N.add("en", {
   // help balloons
   help_help: "Toggle these help hints on or off.",
   help_board: "Start typing your camera model to find its build profile.",
-  help_build: "Build the selected camera's firmware — runs on GitHub Actions, ~20–40 min.",
+  help_build: "Build the selected camera's firmware, runs on GitHub Actions, ~20–40 min.",
   help_stats: "Live status: builds running now, how many are queued, and the typical build time.",
-  help_commit: "The exact thingino commit this branch is at — click to open it on GitHub.",
+  help_commit: "The exact thingino commit this branch is at, click to open it on GitHub.",
   help_lang: "Switch the interface language (auto-detected from your browser).",
-  help_settings: "Settings — choose which thingino branch to build from.",
+  help_settings: "Settings: choose which thingino branch to build from.",
   help_branch: "Pick the thingino branch to build: master (default), ciao, or stable. The camera list updates to match.",
-  setting_help_label: "Show help hints — hover any control for a tip (or use the ? button).",
+  setting_help_label: "Show help hints: hover any control for a tip (or use the ? button).",
   privacy_link: "privacy",
 });

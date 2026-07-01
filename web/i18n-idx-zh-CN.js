@@ -1,6 +1,6 @@
 // Simplified Chinese (zh-CN) strings for the public builder page.
 I18N.add("zh-CN", {
-  // index.html — static
+  // index.html: static
   page_title: "thingino · 固件构建器",
   header_full: " Thingino 固件构建器",
   header_short: " Thingino 构建器",
@@ -13,11 +13,11 @@ I18N.add("zh-CN", {
   footer_limits: "构建在 GitHub Actions 上运行（约 20–40 分钟），请耐心等待。用户限制：每位用户 <strong>每小时 2 次构建</strong>，同时最多 <strong>6</strong> 个。完成的镜像可下载 <strong>30 分钟</strong>，之后将被删除。",
   footer_link: "thingino 固件构建器",
   admin_link: "管理后台",
-  // app.js — dynamic
+  // app.js: dynamic
   min_approx: "约 {n} 分钟",
   not_known_defconfig: "不是已知的 defconfig。",
   profiles_available: "有 {n} 个摄像头配置可用。",
-  cameras_load_failed: "无法加载摄像头列表 — broker 是否已启动？",
+  cameras_load_failed: "无法加载摄像头列表，broker 是否已启动？",
   stats_building: "构建中",
   stats_queued: "排队中",
   stats_typical: "典型构建",
@@ -27,11 +27,11 @@ I18N.add("zh-CN", {
   meta_build_id: "构建 ID",
   deduped_note: "复用了已存在的相同镜像",
   state_queued: "已排队",
-  queued_position: "— 第 {n} 位",
+  queued_position: "（第 {n} 位）",
   cancel_btn: "取消",
   state_building: "构建中…",
   state_cancelling: "正在取消…",
-  cancelling_note: "正在停止构建 — 可能需要片刻",
+  cancelling_note: "正在停止构建，可能需要片刻",
   state_done: "构建完成",
   download_btn: "下载 .bin",
   build_another_btn: "构建另一个",
@@ -51,12 +51,12 @@ I18N.add("zh-CN", {
   // help balloons
   help_help: "开启或关闭这些帮助提示。",
   help_board: "开始输入你的摄像头型号，以查找其构建配置。",
-  help_build: "构建所选摄像头的固件 — 在 GitHub Actions 上运行，约 20–40 分钟。",
+  help_build: "构建所选摄像头的固件，在 GitHub Actions 上运行，约 20–40 分钟。",
   help_stats: "实时状态：当前正在运行的构建、排队数量以及典型构建时间。",
-  help_commit: "该分支所处的确切 thingino 提交 — 点击可在 GitHub 上打开。",
+  help_commit: "该分支所处的确切 thingino 提交，点击可在 GitHub 上打开。",
   help_lang: "切换界面语言（自动从你的浏览器检测）。",
-  help_settings: "设置 — 选择用于构建的 thingino 分支。",
+  help_settings: "设置：选择用于构建的 thingino 分支。",
   help_branch: "选择用于构建的 thingino 分支：master（默认）、ciao 或 stable。摄像头列表会相应更新。",
-  setting_help_label: "显示帮助提示 — 将鼠标悬停在任意控件上即可查看提示（或使用 ? 按钮）。",
+  setting_help_label: "显示帮助提示：将鼠标悬停在任意控件上即可查看提示（或使用 ? 按钮）。",
   privacy_link: "隐私",
 });

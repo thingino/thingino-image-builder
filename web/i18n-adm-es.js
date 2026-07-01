@@ -1,8 +1,8 @@
-// Spanish strings for the admin page — same keys as the English baseline.
+// Spanish strings for the admin page: same keys as the English baseline.
 I18N.add("es", {
   // título del documento
   page_title: "thingino · Admin del Compilador",
-  // puerta / inicio de sesión — estático
+  // puerta / inicio de sesión (estático)
   gate_title: "Admin",
   signin_hint: "Inicia sesión con tu usuario de administrador, contraseña y código de 6 dígitos.",
   master_hint: "Introduce el token maestro y el código maestro de 6 dígitos.",
@@ -32,7 +32,7 @@ I18N.add("es", {
   invalid_invite: "invitación no válida",
 
   // encabezado de la app
-  app_title: "Compilador Thingino — Admin",
+  app_title: "Compilador Thingino Admin",
   signout_btn: "Cerrar sesión",
   updated: "actualizado {t}",
 
@@ -74,9 +74,9 @@ I18N.add("es", {
   title_show_invite: "mostrar de nuevo el enlace de invitación",
   never: "nunca",
   act_remove: "eliminar",
-  no_users: "Aún no hay usuarios administradores — invita a uno arriba.",
+  no_users: "Aún no hay usuarios administradores, invita a uno arriba.",
   creating: "creando…",
-  invite_link_intro: "Invitación para {u} (expira en {n} min) — envíale este enlace privado:",
+  invite_link_intro: "Invitación para {u} (expira en {n} min), envíale este enlace privado:",
   copy_btn: "copiar",
   copied: "copiado",
   confirm_remove_user: "¿Eliminar al administrador \"{u}\"? Se cierra su sesión inmediatamente.",
@@ -107,7 +107,7 @@ I18N.add("es", {
   tile_24h: "24h",
   tile_avg_build: "compilación media",
 
-  // estados de compilación — píldoras + tarjetas
+  // estados de compilación: píldoras + tarjetas
   state_running: "en ejecución",
   state_queued: "en cola",
   state_cancelling: "cancelando",

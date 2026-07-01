@@ -1,8 +1,8 @@
-// English baseline strings for the admin page — single source of keys.
+// English baseline strings for the admin page: single source of keys.
 I18N.add("en", {
   // document title
   page_title: "thingino · Builder Admin",
-  // gate / login — static
+  // gate / login (static)
   gate_title: "Admin",
   signin_hint: "Sign in with your admin username, password, and 6-digit code.",
   master_hint: "Enter the master token and the master 6-digit code.",
@@ -32,7 +32,7 @@ I18N.add("en", {
   invalid_invite: "invalid invite",
 
   // app header
-  app_title: "Thingino Builder — Admin",
+  app_title: "Thingino Builder Admin",
   signout_btn: "Sign out",
   updated: "updated {t}",
 
@@ -74,9 +74,9 @@ I18N.add("en", {
   title_show_invite: "show the invite link again",
   never: "never",
   act_remove: "remove",
-  no_users: "No admin users yet — invite one above.",
+  no_users: "No admin users yet, invite one above.",
   creating: "creating…",
-  invite_link_intro: "Invite for {u} (expires in {n} min) — send them this private link:",
+  invite_link_intro: "Invite for {u} (expires in {n} min), send them this private link:",
   copy_btn: "copy",
   copied: "copied",
   confirm_remove_user: "Remove admin \"{u}\"? They are signed out immediately.",
@@ -107,7 +107,7 @@ I18N.add("en", {
   tile_24h: "24h",
   tile_avg_build: "avg build",
 
-  // build states — pills + tiles
+  // build states: pills + tiles
   state_running: "running",
   state_queued: "queued",
   state_cancelling: "cancelling",

@@ -13,7 +13,7 @@
   const ACTIVE=new Set(['queued','running','cancelling']);
 
   const fmt=s=>{ s=Math.max(0,Math.floor(s)); return `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`; };
-  const mins=s=> s==null?'—':I18N.t('min_approx',{n:Math.max(1,Math.round(s/60))});
+  const mins=s=> s==null?'–':I18N.t('min_approx',{n:Math.max(1,Math.round(s/60))});
   const spin=()=>'<span class="spinner-border spinner-border-sm text-warning me-2"></span>';
 
   async function api(path, opts={}) {

@@ -2,7 +2,7 @@
 I18N.add("pt", {
   // document title
   page_title: "thingino · Admin do Construtor",
-  // gate / login — static
+  // gate / login (static)
   gate_title: "Admin",
   signin_hint: "Entre com seu nome de usuário admin, senha e código de 6 dígitos.",
   master_hint: "Insira o token mestre e o código mestre de 6 dígitos.",
@@ -32,7 +32,7 @@ I18N.add("pt", {
   invalid_invite: "convite inválido",
 
   // app header
-  app_title: "Construtor Thingino — Admin",
+  app_title: "Construtor Thingino Admin",
   signout_btn: "Sair",
   updated: "atualizado {t}",
 
@@ -74,9 +74,9 @@ I18N.add("pt", {
   title_show_invite: "mostrar o link de convite novamente",
   never: "nunca",
   act_remove: "remover",
-  no_users: "Nenhum usuário admin ainda — convide um acima.",
+  no_users: "Nenhum usuário admin ainda, convide um acima.",
   creating: "criando…",
-  invite_link_intro: "Convite para {u} (expira em {n} min) — envie este link privado:",
+  invite_link_intro: "Convite para {u} (expira em {n} min), envie este link privado:",
   copy_btn: "copiar",
   copied: "copiado",
   confirm_remove_user: "Remover o admin \"{u}\"? Ele será desconectado imediatamente.",
@@ -107,7 +107,7 @@ I18N.add("pt", {
   tile_24h: "24h",
   tile_avg_build: "tempo médio",
 
-  // build states — pills + tiles
+  // build states: pills + tiles
   state_running: "em execução",
   state_queued: "na fila",
   state_cancelling: "cancelando",

@@ -11,7 +11,7 @@
  *    Revalidate them (cache: 'no-cache' => a conditional GET: a cheap 304 when
  *    unchanged, a fresh fetch when changed).
  *
- * Cross-origin requests (the Worker API on *.workers.dev) are left untouched — they
+ * Cross-origin requests (the Worker API on *.workers.dev) are left untouched, they
  * pass straight through. The worker caches nothing itself, so it can't get stuck on a
  * stale page. To retire it, deploy a sw.js whose fetch handler is empty.
  */

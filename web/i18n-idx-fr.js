@@ -1,6 +1,6 @@
-// French strings for the public builder page — mirrors i18n-idx-en.js keys.
+// French strings for the public builder page: mirrors i18n-idx-en.js keys.
 I18N.add("fr", {
-  // index.html — static
+  // index.html: static
   page_title: "thingino · Générateur de firmware",
   header_full: " Générateur de firmware Thingino",
   header_short: " Générateur Thingino",
@@ -13,11 +13,11 @@ I18N.add("fr", {
   footer_limits: "Les générations s'exécutent sur GitHub Actions (~20–40 min), merci de patienter. Limites par utilisateur : <strong>2 générations/heure</strong>, <strong>6</strong> au total simultanément. Les images terminées sont téléchargeables pendant <strong>30 minutes</strong>, puis elles sont supprimées.",
   footer_link: "générateur de firmware thingino",
   admin_link: "admin",
-  // app.js — dynamic
+  // app.js: dynamic
   min_approx: "~{n} min",
   not_known_defconfig: "defconfig inconnu.",
   profiles_available: "{n} profils de caméra disponibles.",
-  cameras_load_failed: "Impossible de charger la liste des caméras — le broker est-il actif ?",
+  cameras_load_failed: "Impossible de charger la liste des caméras, le broker est-il actif ?",
   stats_building: "en cours",
   stats_queued: "en file",
   stats_typical: "génération type",
@@ -27,11 +27,11 @@ I18N.add("fr", {
   meta_build_id: "id de génération",
   deduped_note: "réutilisation d'une image identique existante",
   state_queued: "En file",
-  queued_position: "— position {n}",
+  queued_position: "(position {n})",
   cancel_btn: "Annuler",
   state_building: "Génération…",
   state_cancelling: "Annulation…",
-  cancelling_note: "arrêt de la génération — cela peut prendre un instant",
+  cancelling_note: "arrêt de la génération, cela peut prendre un instant",
   state_done: "Génération prête",
   download_btn: "Télécharger .bin",
   build_another_btn: "Générer un autre",
@@ -51,12 +51,12 @@ I18N.add("fr", {
   // help balloons
   help_help: "Affichez ou masquez ces astuces d'aide.",
   help_board: "Commencez à taper le modèle de votre caméra pour trouver son profil de génération.",
-  help_build: "Générez le firmware de la caméra sélectionnée — s'exécute sur GitHub Actions, ~20–40 min.",
+  help_build: "Générez le firmware de la caméra sélectionnée, s'exécute sur GitHub Actions, ~20–40 min.",
   help_stats: "Statut en direct : générations en cours, nombre en file d'attente et durée de génération type.",
-  help_commit: "Le commit thingino exact sur lequel se trouve cette branche — cliquez pour l'ouvrir sur GitHub.",
+  help_commit: "Le commit thingino exact sur lequel se trouve cette branche, cliquez pour l'ouvrir sur GitHub.",
   help_lang: "Changez la langue de l'interface (détectée automatiquement depuis votre navigateur).",
-  help_settings: "Paramètres — choisissez la branche thingino à partir de laquelle générer.",
+  help_settings: "Paramètres : choisissez la branche thingino à partir de laquelle générer.",
   help_branch: "Choisissez la branche thingino à générer : master (par défaut), ciao ou stable. La liste des caméras est mise à jour en conséquence.",
-  setting_help_label: "Affichez les astuces d'aide — survolez n'importe quel contrôle pour un conseil (ou utilisez le bouton ?).",
+  setting_help_label: "Affichez les astuces d'aide : survolez n'importe quel contrôle pour un conseil (ou utilisez le bouton ?).",
   privacy_link: "confidentialité",
 });

@@ -1,8 +1,8 @@
-// French strings for the admin page — mirrors i18n-adm-en.js keys.
+// French strings for the admin page: mirrors i18n-adm-en.js keys.
 I18N.add("fr", {
   // document title
   page_title: "thingino · Admin du générateur",
-  // gate / login — static
+  // gate / login (static)
   gate_title: "Admin",
   signin_hint: "Connectez-vous avec votre nom d'utilisateur admin, votre mot de passe et votre code à 6 chiffres.",
   master_hint: "Saisissez le jeton maître et le code maître à 6 chiffres.",
@@ -32,7 +32,7 @@ I18N.add("fr", {
   invalid_invite: "invitation invalide",
 
   // app header
-  app_title: "Générateur Thingino — Admin",
+  app_title: "Générateur Thingino Admin",
   signout_btn: "Se déconnecter",
   updated: "mis à jour {t}",
 
@@ -74,9 +74,9 @@ I18N.add("fr", {
   title_show_invite: "afficher à nouveau le lien d'invitation",
   never: "jamais",
   act_remove: "supprimer",
-  no_users: "Aucun utilisateur admin pour l'instant — invitez-en un ci-dessus.",
+  no_users: "Aucun utilisateur admin pour l'instant, invitez-en un ci-dessus.",
   creating: "création…",
-  invite_link_intro: "Invitation pour {u} (expire dans {n} min) — envoyez-lui ce lien privé :",
+  invite_link_intro: "Invitation pour {u} (expire dans {n} min), envoyez-lui ce lien privé :",
   copy_btn: "copier",
   copied: "copié",
   confirm_remove_user: "Supprimer l'administrateur « {u} » ? Il est déconnecté immédiatement.",
@@ -107,7 +107,7 @@ I18N.add("fr", {
   tile_24h: "24 h",
   tile_avg_build: "génération moy.",
 
-  // build states — pills + tiles
+  // build states: pills + tiles
   state_running: "en cours",
   state_queued: "en file",
   state_cancelling: "annulation",

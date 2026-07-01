@@ -1,8 +1,8 @@
-// Russian strings for the admin page — keys mirror i18n-adm-en.js.
+// Russian strings for the admin page: keys mirror i18n-adm-en.js.
 I18N.add("ru", {
   // document title
   page_title: "thingino · Администрирование сборщика",
-  // gate / login — static
+  // gate / login (static)
   gate_title: "Администрирование",
   signin_hint: "Войдите, используя имя администратора, пароль и 6-значный код.",
   master_hint: "Введите мастер-токен и 6-значный мастер-код.",
@@ -32,7 +32,7 @@ I18N.add("ru", {
   invalid_invite: "недействительное приглашение",
 
   // app header
-  app_title: "Сборщик Thingino — Администрирование",
+  app_title: "Сборщик Thingino Администрирование",
   signout_btn: "Выйти",
   updated: "обновлено {t}",
 
@@ -74,9 +74,9 @@ I18N.add("ru", {
   title_show_invite: "показать ссылку-приглашение снова",
   never: "никогда",
   act_remove: "удалить",
-  no_users: "Администраторов пока нет — пригласите выше.",
+  no_users: "Администраторов пока нет, пригласите выше.",
   creating: "создание…",
-  invite_link_intro: "Приглашение для {u} (истекает через {n} мин) — отправьте им эту приватную ссылку:",
+  invite_link_intro: "Приглашение для {u} (истекает через {n} мин), отправьте им эту приватную ссылку:",
   copy_btn: "копировать",
   copied: "скопировано",
   confirm_remove_user: "Удалить администратора «{u}»? Сеанс будет завершён немедленно.",
@@ -107,7 +107,7 @@ I18N.add("ru", {
   tile_24h: "24ч",
   tile_avg_build: "ср. сборка",
 
-  // build states — pills + tiles
+  // build states: pills + tiles
   state_running: "выполняется",
   state_queued: "в очереди",
   state_cancelling: "отменяется",

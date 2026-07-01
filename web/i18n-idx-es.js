@@ -1,6 +1,6 @@
-// Spanish strings for the public builder page — same keys as the English baseline.
+// Spanish strings for the public builder page: same keys as the English baseline.
 I18N.add("es", {
-  // index.html — estático
+  // index.html: estático
   page_title: "thingino · Compilador de Firmware",
   header_full: " Compilador de Firmware Thingino",
   header_short: " Compilador Thingino",
@@ -13,11 +13,11 @@ I18N.add("es", {
   footer_limits: "Las compilaciones se ejecutan en GitHub Actions (~20–40 min), así que ten paciencia. Límites de usuario: <strong>2 compilaciones/hora</strong> por usuario, <strong>6</strong> en total a la vez. Las imágenes terminadas se pueden descargar durante <strong>30 minutos</strong>, después se eliminan.",
   footer_link: "compilador de firmware thingino",
   admin_link: "admin",
-  // app.js — dinámico
+  // app.js: dinámico
   min_approx: "~{n} min",
   not_known_defconfig: "No es un defconfig conocido.",
   profiles_available: "{n} perfiles de cámara disponibles.",
-  cameras_load_failed: "No se pudo cargar la lista de cámaras — ¿está activo el broker?",
+  cameras_load_failed: "No se pudo cargar la lista de cámaras, ¿está activo el broker?",
   stats_building: "compilando",
   stats_queued: "en cola",
   stats_typical: "compilación típica",
@@ -27,11 +27,11 @@ I18N.add("es", {
   meta_build_id: "id de compilación",
   deduped_note: "se reutilizó una imagen idéntica existente",
   state_queued: "En cola",
-  queued_position: "— posición {n}",
+  queued_position: "(posición {n})",
   cancel_btn: "Cancelar",
   state_building: "Compilando…",
   state_cancelling: "Cancelando…",
-  cancelling_note: "deteniendo la compilación — esto puede tardar un momento",
+  cancelling_note: "deteniendo la compilación, esto puede tardar un momento",
   state_done: "Compilación lista",
   download_btn: "Descargar .bin",
   build_another_btn: "Compilar otra",
@@ -51,12 +51,12 @@ I18N.add("es", {
   // help balloons
   help_help: "Activa o desactiva estas sugerencias de ayuda.",
   help_board: "Empieza a escribir el modelo de tu cámara para encontrar su perfil de compilación.",
-  help_build: "Compila el firmware de la cámara seleccionada — se ejecuta en GitHub Actions, ~20–40 min.",
+  help_build: "Compila el firmware de la cámara seleccionada, se ejecuta en GitHub Actions, ~20–40 min.",
   help_stats: "Estado en vivo: compilaciones en curso, cuántas hay en cola y el tiempo de compilación típico.",
-  help_commit: "El commit exacto de thingino en el que está esta rama — haz clic para abrirlo en GitHub.",
+  help_commit: "El commit exacto de thingino en el que está esta rama, haz clic para abrirlo en GitHub.",
   help_lang: "Cambia el idioma de la interfaz (detectado automáticamente de tu navegador).",
-  help_settings: "Ajustes — elige desde qué rama de thingino compilar.",
+  help_settings: "Ajustes: elige desde qué rama de thingino compilar.",
   help_branch: "Elige la rama de thingino a compilar: master (predeterminada), ciao o stable. La lista de cámaras se actualiza en consecuencia.",
-  setting_help_label: "Muestra sugerencias de ayuda — pasa el cursor sobre cualquier control para ver un consejo (o usa el botón ?).",
+  setting_help_label: "Muestra sugerencias de ayuda: pasa el cursor sobre cualquier control para ver un consejo (o usa el botón ?).",
   privacy_link: "privacidad",
 });

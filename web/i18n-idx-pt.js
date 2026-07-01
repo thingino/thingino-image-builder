@@ -1,6 +1,6 @@
 // Portuguese (Brazilian) strings for the public builder page.
 I18N.add("pt", {
-  // index.html — static
+  // index.html: static
   page_title: "thingino · Construtor de Firmware",
   header_full: " Construtor de Firmware Thingino",
   header_short: " Construtor Thingino",
@@ -13,11 +13,11 @@ I18N.add("pt", {
   footer_limits: "As compilações rodam no GitHub Actions (~20–40 min), então tenha paciência. Limites: <strong>2 compilações/hora</strong> por usuário e <strong>6</strong> no total ao mesmo tempo. As imagens finalizadas ficam disponíveis para download por <strong>30 minutos</strong>, depois são removidas.",
   footer_link: "construtor de firmware thingino",
   admin_link: "admin",
-  // app.js — dynamic
+  // app.js: dynamic
   min_approx: "~{n} min",
   not_known_defconfig: "Não é um defconfig conhecido.",
   profiles_available: "{n} perfis de câmera disponíveis.",
-  cameras_load_failed: "Não foi possível carregar a lista de câmeras — o broker está ativo?",
+  cameras_load_failed: "Não foi possível carregar a lista de câmeras, o broker está ativo?",
   stats_building: "compilando",
   stats_queued: "na fila",
   stats_typical: "compilação típica",
@@ -27,11 +27,11 @@ I18N.add("pt", {
   meta_build_id: "id da compilação",
   deduped_note: "reutilizou uma imagem idêntica existente",
   state_queued: "Na fila",
-  queued_position: "— posição {n}",
+  queued_position: "(posição {n})",
   cancel_btn: "Cancelar",
   state_building: "Compilando…",
   state_cancelling: "Cancelando…",
-  cancelling_note: "parando a compilação — isso pode levar um momento",
+  cancelling_note: "parando a compilação, isso pode levar um momento",
   state_done: "Compilação pronta",
   download_btn: "Baixar .bin",
   build_another_btn: "Compilar outra",
@@ -51,12 +51,12 @@ I18N.add("pt", {
   // help balloons
   help_help: "Ativa ou desativa estas dicas de ajuda.",
   help_board: "Comece a digitar o modelo da sua câmera para encontrar seu perfil de compilação.",
-  help_build: "Compila o firmware da câmera selecionada — roda no GitHub Actions, ~20–40 min.",
+  help_build: "Compila o firmware da câmera selecionada, roda no GitHub Actions, ~20–40 min.",
   help_stats: "Status ao vivo: compilações em execução agora, quantas estão na fila e o tempo de compilação típico.",
-  help_commit: "O commit exato do thingino em que esta branch está — clique para abri-lo no GitHub.",
+  help_commit: "O commit exato do thingino em que esta branch está, clique para abri-lo no GitHub.",
   help_lang: "Troca o idioma da interface (detectado automaticamente do seu navegador).",
-  help_settings: "Configurações — escolha de qual branch do thingino compilar.",
+  help_settings: "Configurações: escolha de qual branch do thingino compilar.",
   help_branch: "Escolha a branch do thingino a compilar: master (padrão), ciao ou stable. A lista de câmeras é atualizada de acordo.",
-  setting_help_label: "Mostra as dicas de ajuda — passe o cursor sobre qualquer controle para ver uma dica (ou use o botão ?).",
+  setting_help_label: "Mostra as dicas de ajuda: passe o cursor sobre qualquer controle para ver uma dica (ou use o botão ?).",
   privacy_link: "privacidade",
 });

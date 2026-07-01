@@ -1,6 +1,6 @@
-// Japanese (ja) strings for the public builder page — keys mirror i18n-idx-en.js.
+// Japanese (ja) strings for the public builder page: keys mirror i18n-idx-en.js.
 I18N.add("ja", {
-  // index.html — static
+  // index.html: static
   page_title: "thingino · ファームウェアビルダー",
   header_full: " Thingino ファームウェアビルダー",
   header_short: " Thingino ビルダー",
@@ -13,11 +13,11 @@ I18N.add("ja", {
   footer_limits: "ビルドは GitHub Actions 上で実行されます（約20–40分）。しばらくお待ちください。利用制限: ユーザーごとに <strong>1時間あたり2ビルド</strong>、同時に合計 <strong>6</strong> 件まで。完成したイメージは <strong>30分間</strong> ダウンロードでき、その後削除されます。",
   footer_link: "thingino ファームウェアビルダー",
   admin_link: "管理",
-  // app.js — dynamic
+  // app.js: dynamic
   min_approx: "約{n}分",
   not_known_defconfig: "不明な defconfig です。",
   profiles_available: "{n} 件のカメラプロファイルが利用可能です。",
-  cameras_load_failed: "カメラ一覧を読み込めませんでした — ブローカーは起動していますか？",
+  cameras_load_failed: "カメラ一覧を読み込めませんでした。ブローカーは起動していますか？",
   stats_building: "ビルド中",
   stats_queued: "待機中",
   stats_typical: "標準ビルド時間",
@@ -27,11 +27,11 @@ I18N.add("ja", {
   meta_build_id: "ビルドID",
   deduped_note: "既存の同一イメージを再利用しました",
   state_queued: "待機中",
-  queued_position: "— {n} 番目",
+  queued_position: "（{n} 番目）",
   cancel_btn: "キャンセル",
   state_building: "ビルド中…",
   state_cancelling: "キャンセル中…",
-  cancelling_note: "ビルドを停止しています — しばらくかかる場合があります",
+  cancelling_note: "ビルドを停止しています。しばらくかかる場合があります",
   state_done: "ビルド完了",
   download_btn: ".bin をダウンロード",
   build_another_btn: "別のビルドを作成",
@@ -51,12 +51,12 @@ I18N.add("ja", {
   // help balloons
   help_help: "これらのヘルプヒントの表示・非表示を切り替えます。",
   help_board: "カメラのモデル名を入力して、ビルドプロファイルを見つけます。",
-  help_build: "選択したカメラのファームウェアをビルドします — GitHub Actions 上で実行、約20–40分。",
+  help_build: "選択したカメラのファームウェアをビルドします。GitHub Actions 上で実行、約20–40分。",
   help_stats: "リアルタイムの状態：実行中のビルド、待機中の件数、標準ビルド時間。",
-  help_commit: "このブランチが指す正確な thingino コミット — クリックすると GitHub で開きます。",
+  help_commit: "このブランチが指す正確な thingino コミット。クリックすると GitHub で開きます。",
   help_lang: "インターフェースの言語を切り替えます（ブラウザから自動検出）。",
-  help_settings: "設定 — ビルドに使用する thingino ブランチを選びます。",
+  help_settings: "設定：ビルドに使用する thingino ブランチを選びます。",
   help_branch: "ビルドする thingino ブランチを選択します：master（デフォルト）、ciao、または stable。カメラ一覧もそれに合わせて更新されます。",
-  setting_help_label: "ヘルプヒントを表示 — 任意のコントロールにカーソルを合わせるとヒントが表示されます（または ? ボタンを使用）。",
+  setting_help_label: "ヘルプヒントを表示：任意のコントロールにカーソルを合わせるとヒントが表示されます（または ? ボタンを使用）。",
   privacy_link: "プライバシー",
 });

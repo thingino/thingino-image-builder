@@ -1,6 +1,6 @@
-// Russian strings for the public builder page — keys mirror i18n-idx-en.js.
+// Russian strings for the public builder page: keys mirror i18n-idx-en.js.
 I18N.add("ru", {
-  // index.html — static
+  // index.html: static
   page_title: "thingino · Сборщик прошивки",
   header_full: " Сборщик прошивки Thingino",
   header_short: " Сборщик Thingino",
@@ -13,11 +13,11 @@ I18N.add("ru", {
   footer_limits: "Сборки выполняются в GitHub Actions (~20–40 мин), поэтому наберитесь терпения. Ограничения: <strong>2 сборки/час</strong> на пользователя, <strong>6</strong> одновременно. Готовые образы доступны для скачивания в течение <strong>30 минут</strong>, затем удаляются.",
   footer_link: "сборщик прошивки thingino",
   admin_link: "админ",
-  // app.js — dynamic
+  // app.js: dynamic
   min_approx: "~{n} мин",
   not_known_defconfig: "Неизвестный defconfig.",
   profiles_available: "Доступно профилей камер: {n}.",
-  cameras_load_failed: "Не удалось загрузить список камер — брокер запущен?",
+  cameras_load_failed: "Не удалось загрузить список камер, брокер запущен?",
   stats_building: "в сборке",
   stats_queued: "в очереди",
   stats_typical: "обычная сборка",
@@ -27,11 +27,11 @@ I18N.add("ru", {
   meta_build_id: "ID сборки",
   deduped_note: "повторно использован существующий идентичный образ",
   state_queued: "В очереди",
-  queued_position: "— позиция {n}",
+  queued_position: "(позиция {n})",
   cancel_btn: "Отмена",
   state_building: "Сборка…",
   state_cancelling: "Отменяется…",
-  cancelling_note: "останавливаем сборку — это может занять некоторое время",
+  cancelling_note: "останавливаем сборку, это может занять некоторое время",
   state_done: "Сборка готова",
   download_btn: "Скачать .bin",
   build_another_btn: "Собрать ещё",
@@ -51,12 +51,12 @@ I18N.add("ru", {
   // help balloons
   help_help: "Включить или выключить эти подсказки.",
   help_board: "Начните вводить модель вашей камеры, чтобы найти её профиль сборки.",
-  help_build: "Собрать прошивку выбранной камеры — выполняется в GitHub Actions, ~20–40 мин.",
+  help_build: "Собрать прошивку выбранной камеры, выполняется в GitHub Actions, ~20–40 мин.",
   help_stats: "Статус в реальном времени: текущие сборки, сколько в очереди и обычное время сборки.",
-  help_commit: "Точный коммит thingino, на котором находится эта ветка — нажмите, чтобы открыть его на GitHub.",
+  help_commit: "Точный коммит thingino, на котором находится эта ветка, нажмите, чтобы открыть его на GitHub.",
   help_lang: "Переключить язык интерфейса (определяется автоматически по вашему браузеру).",
-  help_settings: "Настройки — выберите, из какой ветки thingino выполнять сборку.",
+  help_settings: "Настройки: выберите, из какой ветки thingino выполнять сборку.",
   help_branch: "Выберите ветку thingino для сборки: master (по умолчанию), ciao или stable. Список камер обновляется соответственно.",
-  setting_help_label: "Показывать подсказки — наведите курсор на любой элемент управления, чтобы увидеть подсказку (или нажмите кнопку ?).",
+  setting_help_label: "Показывать подсказки: наведите курсор на любой элемент управления, чтобы увидеть подсказку (или нажмите кнопку ?).",
   privacy_link: "конфиденциальность",
 });

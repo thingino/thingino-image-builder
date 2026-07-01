@@ -1,8 +1,8 @@
-// Japanese (ja) strings for the admin page — keys mirror i18n-adm-en.js.
+// Japanese (ja) strings for the admin page: keys mirror i18n-adm-en.js.
 I18N.add("ja", {
   // document title
   page_title: "thingino · ビルダー管理",
-  // gate / login — static
+  // gate / login (static)
   gate_title: "管理者",
   signin_hint: "管理者のユーザー名、パスワード、6桁のコードでサインインしてください。",
   master_hint: "マスタートークンとマスターの6桁コードを入力してください。",
@@ -32,7 +32,7 @@ I18N.add("ja", {
   invalid_invite: "無効な招待",
 
   // app header
-  app_title: "Thingino ビルダー — 管理",
+  app_title: "Thingino ビルダー管理",
   signout_btn: "サインアウト",
   updated: "更新 {t}",
 
@@ -74,9 +74,9 @@ I18N.add("ja", {
   title_show_invite: "招待リンクを再表示",
   never: "なし",
   act_remove: "削除",
-  no_users: "管理者ユーザーがまだいません — 上から招待してください。",
+  no_users: "管理者ユーザーがまだいません、上から招待してください。",
   creating: "作成中…",
-  invite_link_intro: "{u} さんへの招待（{n} 分で期限切れ） — このプライベートリンクを送ってください:",
+  invite_link_intro: "{u} さんへの招待（{n} 分で期限切れ）、このプライベートリンクを送ってください:",
   copy_btn: "コピー",
   copied: "コピーしました",
   confirm_remove_user: "管理者「{u}」を削除しますか？直ちにサインアウトされます。",
@@ -107,7 +107,7 @@ I18N.add("ja", {
   tile_24h: "24時間",
   tile_avg_build: "平均ビルド時間",
 
-  // build states — pills + tiles
+  // build states: pills + tiles
   state_running: "実行中",
   state_queued: "待機中",
   state_cancelling: "キャンセル中",

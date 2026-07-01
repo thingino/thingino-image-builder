@@ -1,4 +1,4 @@
-// Tiny i18n runtime — bundled + CSP-safe (no eval, no external fetch).
+// Tiny i18n runtime, bundled + CSP-safe (no eval, no external fetch).
 // Load order per page: i18n.js → the dict files (i18n-<page>.js + i18n-<lang>.js,
 // which each call I18N.add(lang, {...})) → the page's app script.
 //

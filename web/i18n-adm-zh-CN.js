@@ -2,7 +2,7 @@
 I18N.add("zh-CN", {
   // document title
   page_title: "thingino · 构建器管理",
-  // gate / login — static
+  // gate / login (static)
   gate_title: "管理后台",
   signin_hint: "使用您的管理员用户名、密码和 6 位验证码登录。",
   master_hint: "输入主令牌及其 6 位验证码。",
@@ -32,7 +32,7 @@ I18N.add("zh-CN", {
   invalid_invite: "邀请无效",
 
   // app header
-  app_title: "Thingino 构建器 — 管理",
+  app_title: "Thingino 构建器管理",
   signout_btn: "退出登录",
   updated: "更新于 {t}",
 
@@ -74,9 +74,9 @@ I18N.add("zh-CN", {
   title_show_invite: "再次显示邀请链接",
   never: "从未",
   act_remove: "移除",
-  no_users: "暂无管理员用户 — 请在上方邀请。",
+  no_users: "暂无管理员用户，请在上方邀请。",
   creating: "正在创建…",
-  invite_link_intro: "为 {u} 创建的邀请（{n} 分钟后过期）— 请将此私密链接发送给对方：",
+  invite_link_intro: "为 {u} 创建的邀请（{n} 分钟后过期），请将此私密链接发送给对方：",
   copy_btn: "复制",
   copied: "已复制",
   confirm_remove_user: "移除管理员 \"{u}\"？对方将立即被登出。",
@@ -107,7 +107,7 @@ I18N.add("zh-CN", {
   tile_24h: "24 小时",
   tile_avg_build: "平均构建",
 
-  // build states — pills + tiles
+  // build states: pills + tiles
   state_running: "运行中",
   state_queued: "排队中",
   state_cancelling: "取消中",

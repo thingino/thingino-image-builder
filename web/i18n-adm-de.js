@@ -1,8 +1,8 @@
-// German strings for the admin page — keys mirror i18n-adm-en.js.
+// German strings for the admin page: keys mirror i18n-adm-en.js.
 I18N.add("de", {
   // document title
   page_title: "thingino · Builder-Admin",
-  // gate / login — static
+  // gate / login (static)
   gate_title: "Admin",
   signin_hint: "Melden Sie sich mit Admin-Benutzername, Passwort und 6-stelligem Code an.",
   master_hint: "Master-Token und 6-stelligen Master-Code eingeben.",
@@ -32,7 +32,7 @@ I18N.add("de", {
   invalid_invite: "ungültige Einladung",
 
   // app header
-  app_title: "Thingino Builder — Admin",
+  app_title: "Thingino Builder Admin",
   signout_btn: "Abmelden",
   updated: "aktualisiert {t}",
 
@@ -74,9 +74,9 @@ I18N.add("de", {
   title_show_invite: "Einladungslink erneut anzeigen",
   never: "nie",
   act_remove: "entfernen",
-  no_users: "Noch keine Admin-Benutzer — oben einen einladen.",
+  no_users: "Noch keine Admin-Benutzer, oben einen einladen.",
   creating: "wird erstellt…",
-  invite_link_intro: "Einladung für {u} (läuft in {n} Min. ab) — senden Sie diesen privaten Link:",
+  invite_link_intro: "Einladung für {u} (läuft in {n} Min. ab), senden Sie diesen privaten Link:",
   copy_btn: "kopieren",
   copied: "kopiert",
   confirm_remove_user: "Admin \"{u}\" entfernen? Der Benutzer wird sofort abgemeldet.",
@@ -107,7 +107,7 @@ I18N.add("de", {
   tile_24h: "24 Std.",
   tile_avg_build: "Ø Build",
 
-  // build states — pills + tiles
+  // build states: pills + tiles
   state_running: "läuft",
   state_queued: "wartend",
   state_cancelling: "wird abgebrochen",
