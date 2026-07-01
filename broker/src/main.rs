@@ -1232,6 +1232,7 @@ async fn admin_stats(State(st): State<AppState>, headers: HeaderMap) -> Response
     let recent_builds = query_recent_builds(&conn, 25);
     let recent_events = query_recent_events(&conn, 60);
     let enabled = builds_enabled(&conn);
+    let manage_users = admin_can(&conn, &me, "manage_users");
     drop(conn);
     Json(json!({
         "builds_enabled": enabled,
@@ -1260,6 +1261,7 @@ async fn admin_stats(State(st): State<AppState>, headers: HeaderMap) -> Response
         },
         "me": me,
         "master": master,
+        "manage_users": manage_users,
     }))
     .into_response()
 }
@@ -1500,10 +1502,16 @@ struct InviteReq {
     username: String,
 }
 
-/// Master only: invite a new named admin (generates a one-time invite token + TOTP secret).
+/// Master or a `manage_users` admin: invite a new named admin (generates a one-time invite
+/// token + TOTP secret). The actual inviter is recorded as `created_by`.
 async fn admin_invite(State(st): State<AppState>, headers: HeaderMap, Json(body): Json<InviteReq>) -> Response {
-    if let Some(e) = require_master(&headers, &st) {
-        return e;
+    let Some(identity) = session_admin(&headers, &st) else {
+        return json_err(StatusCode::UNAUTHORIZED, "admin auth required");
+    };
+    let conn = st.db.lock();
+    if !admin_can(&conn, &identity, "manage_users") {
+        drop(conn);
+        return json_err(StatusCode::FORBIDDEN, "not permitted");
     }
     let u = body.username.to_lowercase().trim().to_string();
     // "master" is the reserved break-glass identity — never let it be created as a named
@@ -1518,7 +1526,6 @@ async fn admin_invite(State(st): State<AppState>, headers: HeaderMap, Json(body)
     let token = rand_token();
     let secret = new_totp_secret();
     let exp = now() + 3600; // invite valid 60 minutes
-    let conn = st.db.lock();
     let exists = conn
         .query_row("SELECT 1 FROM admins WHERE username=?1", [&u], |_| Ok(()))
         .optional().ok().flatten().is_some();
@@ -1528,7 +1535,7 @@ async fn admin_invite(State(st): State<AppState>, headers: HeaderMap, Json(body)
     if conn
         .execute(
             "INSERT INTO admins(username, totp_secret, invite_token, invite_expires, created_ts, created_by) VALUES (?1,?2,?3,?4,?5,?6)",
-            rusqlite::params![u, secret, token, exp, now(), "master"],
+            rusqlite::params![u, secret, token, exp, now(), identity],
         )
         .is_err()
     {
@@ -1539,25 +1546,34 @@ async fn admin_invite(State(st): State<AppState>, headers: HeaderMap, Json(body)
     Json(json!({ "ok": true, "username": u, "invite_token": token, "expires_in": 3600 })).into_response()
 }
 
-/// Master only: list admin users with their state (active/invited/invite-expired/disabled).
+/// Master or a `manage_users` admin: list admin users with their state
+/// (active/invited/invite-expired/disabled).
 async fn admin_list_users(State(st): State<AppState>, headers: HeaderMap) -> Response {
-    if let Some(e) = require_master(&headers, &st) {
-        return e;
-    }
+    let Some(identity) = session_admin(&headers, &st) else {
+        return json_err(StatusCode::UNAUTHORIZED, "admin auth required");
+    };
     let conn = st.db.lock();
+    if !admin_can(&conn, &identity, "manage_users") {
+        drop(conn);
+        return json_err(StatusCode::FORBIDDEN, "not permitted");
+    }
     let users = query_admin_users(&conn);
     drop(conn);
     Json(json!({ "users": users })).into_response()
 }
 
-/// Master only: delete a named admin + kill its live sessions.
+/// Master or a `manage_users` admin: delete a named admin + kill its live sessions.
 async fn admin_delete_user(State(st): State<AppState>, headers: HeaderMap, Path(username): Path<String>) -> Response {
-    if let Some(e) = require_master(&headers, &st) {
-        return e;
-    }
+    let Some(identity) = session_admin(&headers, &st) else {
+        return json_err(StatusCode::UNAUTHORIZED, "admin auth required");
+    };
     let u = username.to_lowercase();
     let deleted = {
         let conn = st.db.lock();
+        if !admin_can(&conn, &identity, "manage_users") {
+            drop(conn);
+            return json_err(StatusCode::FORBIDDEN, "not permitted");
+        }
         let n = conn.execute("DELETE FROM admins WHERE username=?1", [&u]).unwrap_or(0);
         log_event(&conn, "admin_user_deleted", None, None, None, &format!("deleted {u}"), None);
         n
@@ -1572,17 +1588,21 @@ struct DisableReq {
     disabled: bool,
 }
 
-/// Master only: disable/enable a named admin (disabling also kills its sessions).
-/// Not used by the current frontend; present for full Worker parity. Tolerates an
+/// Master or a `manage_users` admin: disable/enable a named admin (disabling also kills its
+/// sessions). Not used by the current frontend; present for full Worker parity. Tolerates an
 /// empty/invalid body (defaults to enabled), like the Worker's `catch { body = {} }`.
 async fn admin_disable_user(State(st): State<AppState>, headers: HeaderMap, Path(username): Path<String>, raw: Bytes) -> Response {
-    if let Some(e) = require_master(&headers, &st) {
-        return e;
-    }
+    let Some(identity) = session_admin(&headers, &st) else {
+        return json_err(StatusCode::UNAUTHORIZED, "admin auth required");
+    };
     let disabled = serde_json::from_slice::<DisableReq>(&raw).map(|b| b.disabled).unwrap_or(false);
     let u = username.to_lowercase();
     {
         let conn = st.db.lock();
+        if !admin_can(&conn, &identity, "manage_users") {
+            drop(conn);
+            return json_err(StatusCode::FORBIDDEN, "not permitted");
+        }
         conn.execute("UPDATE admins SET disabled=?2 WHERE username=?1", rusqlite::params![u, i64::from(disabled)]).ok();
         log_event(&conn, "admin_user_disabled", None, None, None, &format!("{} {}", if disabled { "disabled" } else { "enabled" }, u), None);
     }
@@ -1608,7 +1628,7 @@ async fn admin_set_privileges(State(st): State<AppState>, headers: HeaderMap, Pa
     if let Some(arr) = body.get("privileges").and_then(|v| v.as_array()) {
         for item in arr {
             if let Some(s) = item.as_str() {
-                if matches!(s, "clear_logs" | "clear_builds" | "reset_limits" | "edit_limits" | "kill_switch") && !privs.iter().any(|p| p == s) {
+                if matches!(s, "clear_logs" | "clear_builds" | "reset_limits" | "edit_limits" | "kill_switch" | "manage_users") && !privs.iter().any(|p| p == s) {
                     privs.push(s.to_string());
                 }
             }
