@@ -42,4 +42,10 @@ I18N.add("fr", {
   state_cancelled: "Annulée",
   build_again_btn: "Générer à nouveau",
   request_failed: "Échec de la requête ({status}).",
+  gear_title: "Paramètres",
+  settings_title: "Paramètres",
+  close_btn: "Fermer",
+  branch_label: "branche thingino à partir de laquelle générer :",
+  branch_default: "(par défaut)",
+  branch_note: "Change la branche thingino à partir de laquelle votre firmware est généré. La liste des caméras est mise à jour en conséquence.",
 });

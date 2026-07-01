@@ -32,7 +32,7 @@ use parking_lot::Mutex;
 
 use axum::{
     body::Bytes,
-    extract::{ConnectInfo, Path, State},
+    extract::{ConnectInfo, Path, Query, State},
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{delete, get, post},
@@ -63,7 +63,6 @@ struct Config {
     app_mode: bool,
     github_repo: String,
     thingino_repo: String,
-    thingino_ref: String,
     rolling_tag: String,
     per_user_hourly: i64,
     per_ip_hourly: i64,
@@ -79,9 +78,10 @@ struct Config {
     update_marker: Option<String>,
 }
 
-/// Thingino's pinned commit + the buildable defconfig list AT that commit. Seeded
-/// from the baked defconfigs.json, then refreshed live from GitHub so new boards
-/// appear without a redeploy. List and commit always move together.
+/// Thingino's pinned commit + the buildable defconfig list AT that commit, for one
+/// branch. Seeded from the baked defconfigs.json, then refreshed live from GitHub so
+/// new boards appear without a redeploy. List and commit always move together. One of
+/// these is cached per branch (master/ciao/stable) in `AppState.thingino`.
 #[derive(Clone)]
 struct Thingino {
     commit: Option<String>,
@@ -96,7 +96,11 @@ struct AppState {
     db: Arc<Mutex<Connection>>,
     http: reqwest::Client,
     cfg: Arc<Config>,
-    thingino: Arc<Mutex<Thingino>>,
+    // Pinned commit + defconfig list per branch (keyed by validated ref: master/ciao/stable),
+    // each with its own TTL. Seeded lazily from the fallback below on first access/miss.
+    thingino: Arc<Mutex<std::collections::HashMap<String, Thingino>>>,
+    fallback_list: Arc<Vec<String>>,
+    fallback_set: Arc<HashSet<String>>,
     sessions: Arc<Mutex<std::collections::HashMap<String, (String, i64)>>>,
     // Per-IP request throttle (audit F12): ip -> (window_start, count), in-memory.
     request_limiter: Arc<Mutex<std::collections::HashMap<String, (i64, u32)>>>,
@@ -614,7 +618,6 @@ async fn main() -> anyhow::Result<()> {
         app_mode,
         github_repo: std::env::var("GITHUB_REPO").map_err(|_| anyhow::anyhow!("GITHUB_REPO required (owner/repo)"))?,
         thingino_repo: env_or("THINGINO_REPO", "themactep/thingino-firmware"),
-        thingino_ref: env_or("THINGINO_REF", "master"),
         rolling_tag: env_or("ROLLING_TAG", "web-builds"),
         per_user_hourly: env_i64("PER_USER_HOURLY_LIMIT", 2),
         per_ip_hourly: env_i64("PER_IP_HOURLY_LIMIT", 3),
@@ -640,6 +643,8 @@ async fn main() -> anyhow::Result<()> {
     fallback_list.sort();
     let fallback_set: HashSet<String> = fallback_list.iter().cloned().collect();
     tracing::info!("loaded {} fallback defconfigs", fallback_list.len());
+    let fallback_list = Arc::new(fallback_list);
+    let fallback_set = Arc::new(fallback_set);
 
     let conn = Connection::open(&db_path)?;
     conn.busy_timeout(Duration::from_secs(5))?;
@@ -707,13 +712,10 @@ async fn main() -> anyhow::Result<()> {
         db: Arc::new(Mutex::new(conn)),
         http,
         cfg: Arc::new(cfg),
-        thingino: Arc::new(Mutex::new(Thingino {
-            commit: None,
-            list: Arc::new(fallback_list),
-            set: Arc::new(fallback_set),
-            list_commit: None,
-            fetched_at: 0,
-        })),
+        // Per-branch commit + defconfig list, filled in lazily (and warmed by the scheduler).
+        thingino: Arc::new(Mutex::new(std::collections::HashMap::new())),
+        fallback_list,
+        fallback_set,
         sessions: Arc::new(Mutex::new(std::collections::HashMap::new())),
         request_limiter: Arc::new(Mutex::new(std::collections::HashMap::new())),
         installation_token: Arc::new(Mutex::new((None, 0))),
@@ -783,15 +785,23 @@ async fn shutdown_signal() {
 
 // ---- public handlers ------------------------------------------------------
 
-async fn get_defconfigs(State(st): State<AppState>) -> Response {
-    let t = resolve_thingino(&st).await;
+/// `?ref=<branch>` query param (defconfigs + stats). Absent/empty/unknown is validated
+/// down to "master" by `resolve_thingino`, so it's safe to forward verbatim.
+#[derive(Deserialize)]
+struct RefQuery {
+    #[serde(rename = "ref", default)]
+    req_ref: String,
+}
+
+async fn get_defconfigs(State(st): State<AppState>, Query(q): Query<RefQuery>) -> Response {
+    let t = resolve_thingino(&st, &q.req_ref).await;
     Json(t.list.as_ref().clone()).into_response()
 }
 
-async fn get_stats(State(st): State<AppState>, headers: HeaderMap) -> Response {
+async fn get_stats(State(st): State<AppState>, Query(q): Query<RefQuery>, headers: HeaderMap) -> Response {
     let uid = resolve_uid(&headers);
     let now_ts = now();
-    let commit = current_commit(&st).await;
+    let commit = current_commit(&st, &q.req_ref).await;
     let conn = st.db.lock();
     let max_concurrent = effective_limits(&conn, &st.cfg).max_concurrent;
     let running: i64 = conn.query_row("SELECT count(*) FROM builds WHERE state='running'", [], |r| r.get(0)).unwrap_or(0);
@@ -826,6 +836,9 @@ async fn get_stats(State(st): State<AppState>, headers: HeaderMap) -> Response {
 #[derive(Deserialize)]
 struct BuildReq {
     defconfig: String,
+    // Chosen thingino branch; absent/empty/unknown → "master" (validated in resolve_thingino).
+    #[serde(rename = "ref", default)]
+    req_ref: String,
 }
 
 async fn post_build(
@@ -835,7 +848,9 @@ async fn post_build(
     Json(req): Json<BuildReq>,
 ) -> Response {
     let defconfig = req.defconfig.trim().to_string();
-    let thingino = resolve_thingino(&st).await;
+    // Resolve the pinned commit + defconfig list for the chosen branch; the build is then
+    // dispatched/deduped against that branch's commit (stored per-build below, unchanged).
+    let thingino = resolve_thingino(&st, &req.req_ref).await;
     if !thingino.set.contains(&defconfig) {
         return json_err(StatusCode::BAD_REQUEST, "unknown defconfig");
     }
@@ -1854,8 +1869,19 @@ fn query_admin_users(conn: &Connection) -> Vec<serde_json::Value> {
 
 // Public reads (no auth) so a builder-repo-scoped token needs no thingino access.
 
-async fn fetch_commit(st: &AppState) -> Option<String> {
-    let url = format!("https://api.github.com/repos/{}/commits/{}", st.cfg.thingino_repo, st.cfg.thingino_ref);
+/// The thingino branches the builder offers. Mirrors the frontend + Worker allow-list.
+const THINGINO_REFS: [&str; 3] = ["master", "ciao", "stable"];
+
+/// Validate a requested branch against the allow-list. Anything not in it (including
+/// empty/missing) falls back to "master", so only a known-good ref ever reaches the
+/// GitHub API — no arbitrary-ref injection. Mirrors the Worker's ref validation.
+fn valid_ref(req: &str) -> &'static str {
+    THINGINO_REFS.into_iter().find(|&r| r == req).unwrap_or("master")
+}
+
+/// Latest commit sha on a (validated) branch of the thingino repo.
+async fn fetch_commit(st: &AppState, git_ref: &str) -> Option<String> {
+    let url = format!("https://api.github.com/repos/{}/commits/{}", st.cfg.thingino_repo, git_ref);
     match gh(st.http.get(&url)).send().await {
         Ok(r) => r.json::<serde_json::Value>().await.ok().and_then(|v| v["sha"].as_str().map(|s| s.to_string())),
         Err(_) => None,
@@ -1898,20 +1924,27 @@ async fn fetch_defconfigs(st: &AppState, commit: &str) -> Option<Vec<String>> {
     }
 }
 
-/// Resolve thingino's pinned commit + the defconfig list at that commit, cached
-/// ~2 min. The list is re-fetched only when the commit moves; on any failure the
-/// last-good (seeded from defconfigs.json) cache is kept.
-async fn resolve_thingino(st: &AppState) -> Thingino {
+/// Resolve thingino's pinned commit + the defconfig list at that commit for the chosen
+/// branch, cached per-branch (~5 min TTL). `req_ref` is validated to master/ciao/stable
+/// first, so only a known-good ref hits the GitHub API. The list is re-fetched only when
+/// that branch's commit moves; on any failure the last-good per-branch cache (seeded from
+/// defconfigs.json on first miss) is kept.
+async fn resolve_thingino(st: &AppState, req_ref: &str) -> Thingino {
+    let git_ref = valid_ref(req_ref);
+    // Fast path: a fresh cached entry for this branch.
     {
-        let t = st.thingino.lock();
-        if t.commit.is_some() && now() - t.fetched_at < THINGINO_CACHE_SECS {
-            return t.clone();
+        let map = st.thingino.lock();
+        if let Some(t) = map.get(git_ref) {
+            if t.commit.is_some() && now() - t.fetched_at < THINGINO_CACHE_SECS {
+                return t.clone();
+            }
         }
     }
-    let commit = fetch_commit(st).await;
+    let commit = fetch_commit(st, git_ref).await;
     let need_list = {
-        let t = st.thingino.lock();
-        match (&commit, &t.list_commit) {
+        let map = st.thingino.lock();
+        let list_commit = map.get(git_ref).and_then(|t| t.list_commit.clone());
+        match (&commit, &list_commit) {
             (Some(c), Some(lc)) => c != lc,
             (Some(_), None) => true,
             (None, _) => false,
@@ -1921,7 +1954,16 @@ async fn resolve_thingino(st: &AppState) -> Thingino {
         (Some(c), true) => fetch_defconfigs(st, c).await.map(|l| (l, c.clone())),
         _ => None,
     };
-    let mut t = st.thingino.lock();
+    let mut map = st.thingino.lock();
+    // Seed a brand-new branch entry from the baked fallback list so a first miss still
+    // returns something usable; existing entries keep their last-good values.
+    let t = map.entry(git_ref.to_string()).or_insert_with(|| Thingino {
+        commit: None,
+        list: st.fallback_list.clone(),
+        set: st.fallback_set.clone(),
+        list_commit: None,
+        fetched_at: 0,
+    });
     if let Some(c) = commit {
         t.commit = Some(c);
         t.fetched_at = now();
@@ -1930,14 +1972,14 @@ async fn resolve_thingino(st: &AppState) -> Thingino {
         t.set = Arc::new(list.iter().cloned().collect());
         t.list = Arc::new(list);
         t.list_commit = Some(lc);
-        tracing::info!("defconfigs refreshed: {} boards @ {}", t.list.len(), t.list_commit.as_deref().unwrap_or("?"));
+        tracing::info!("defconfigs refreshed for {}: {} boards @ {}", git_ref, t.list.len(), t.list_commit.as_deref().unwrap_or("?"));
     }
     t.clone()
 }
 
-/// The thingino commit builds will use (pinned).
-async fn current_commit(st: &AppState) -> Option<String> {
-    resolve_thingino(st).await.commit
+/// The thingino commit builds on the chosen branch will use (pinned).
+async fn current_commit(st: &AppState, req_ref: &str) -> Option<String> {
+    resolve_thingino(st, req_ref).await.commit
 }
 
 async fn scheduler_loop(st: AppState) {
@@ -1969,7 +2011,10 @@ type QueuedBuild = (String, String, Option<String>);
 
 async fn scheduler_step(st: &AppState) -> anyhow::Result<()> {
     let now_ts = now();
-    let _ = resolve_thingino(st).await; // keep commit + defconfig list warm (picks up new boards)
+    // Keep every branch's commit + defconfig list warm (picks up new boards per branch).
+    for r in THINGINO_REFS {
+        let _ = resolve_thingino(st, r).await;
+    }
     let lim = { let conn = st.db.lock(); effective_limits(&conn, &st.cfg) };
 
     // 1) Snapshot running builds + the next queued builds to dispatch.

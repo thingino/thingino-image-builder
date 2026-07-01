@@ -42,4 +42,10 @@ I18N.add("ru", {
   state_cancelled: "Отменено",
   build_again_btn: "Собрать снова",
   request_failed: "Ошибка запроса ({status}).",
+  gear_title: "Настройки",
+  settings_title: "Настройки",
+  close_btn: "Закрыть",
+  branch_label: "ветка thingino для сборки:",
+  branch_default: "(по умолчанию)",
+  branch_note: "Меняет ветку thingino, из которой собирается прошивка. Список камер обновляется соответственно.",
 });

@@ -6,6 +6,8 @@
   const setUid=u=>{ if(u) localStorage.setItem(LS_KEY,u); };
   let myId=localStorage.getItem(MY_KEY)||null;
   const setMy=id=>{ myId=id; if(id) localStorage.setItem(MY_KEY,id); else localStorage.removeItem(MY_KEY); };
+  const REFS=['master','ciao','stable'], REF_KEY='thingino_ref';
+  let curRef=REFS.includes(localStorage.getItem(REF_KEY))?localStorage.getItem(REF_KEY):'master';
 
   let allowed=new Set(), maxConc=6, avgSecs=null, curCommit=null, you=null, youAt=0;
   const ACTIVE=new Set(['queued','running','cancelling']);
@@ -30,7 +32,7 @@
     else { h.textContent=allowed.size?I18N.t('profiles_available',{n:allowed.size}):''; h.className='form-text muted'; }
   }
   async function loadBoards(){
-    const {ok,data}=await api('/api/defconfigs');
+    const {ok,data}=await api('/api/defconfigs?ref='+encodeURIComponent(curRef));
     if(!ok||!Array.isArray(data)){ const h=$('hint'); h.textContent=I18N.t('cameras_load_failed'); h.className='form-text text-danger'; return; }
     data.sort(); allowed=new Set(data);
     $('boards').innerHTML=data.map(b=>`<option value="${esc(b)}">`).join('');
@@ -77,7 +79,7 @@
   }
 
   async function refresh(){
-    const {ok,data}=await api('/api/stats');
+    const {ok,data}=await api('/api/stats?ref='+encodeURIComponent(curRef));
     if(ok&&data){ maxConc=data.max_concurrent||6; avgSecs=data.avg_build_secs; renderGlobal(data);
       if(!myId && data.you){ setMy(data.you.build_id); } }
     if(myId){
@@ -91,7 +93,7 @@
     const defconfig=$('board').value.trim();
     if(!allowed.has(defconfig)) return;
     $('go').disabled=true;
-    const {ok,status,data}=await api('/api/build',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({defconfig})});
+    const {ok,status,data}=await api('/api/build',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({defconfig,ref:curRef})});
     if(!ok){ const h=$('hint'); h.textContent=(data&&data.error)||I18N.t('request_failed',{status}); h.className='form-text text-danger'; $('go').disabled=false; return; }
     setMy(data.build_id);
     you={build_id:data.build_id, defconfig:data.defconfig, state:data.state||'queued', position:data.position||0, elapsed_secs:0, download_url:data.download_url, deduped:data.deduped};
@@ -109,6 +111,12 @@
   $('board').addEventListener('input',validate);
   $('board').addEventListener('keydown',e=>{ if(e.key==='Enter'&&!$('go').disabled) submit(); });
   $('go').addEventListener('click',submit);
+  function openSettings(){ const r=$('branch-'+curRef); if(r) r.checked=true; $('settings-overlay').classList.remove('d-none'); }
+  function closeSettings(){ $('settings-overlay').classList.add('d-none'); }
+  $('settings-btn').addEventListener('click',openSettings);
+  $('settings-close').addEventListener('click',closeSettings);
+  $('settings-overlay').addEventListener('click',e=>{ if(e.target===$('settings-overlay')) closeSettings(); });
+  document.querySelectorAll('.branch-radio').forEach(r=>r.addEventListener('change',()=>{ if(r.checked&&REFS.includes(r.value)){ curRef=r.value; localStorage.setItem(REF_KEY,curRef); loadBoards(); refresh(); } }));
   I18N.apply(); I18N.selector('lang-slot');
   window.addEventListener('i18nchange',()=>{ I18N.apply(); validate(); renderYou(); refresh(); });
   loadBoards(); refresh();

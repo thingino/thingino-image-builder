@@ -42,4 +42,10 @@ I18N.add("ja", {
   state_cancelled: "キャンセル済み",
   build_again_btn: "再ビルド",
   request_failed: "リクエストに失敗しました（{status}）。",
+  gear_title: "設定",
+  settings_title: "設定",
+  close_btn: "閉じる",
+  branch_label: "ビルドに使用する thingino ブランチ：",
+  branch_default: "（デフォルト）",
+  branch_note: "ファームウェアのビルド元となる thingino ブランチを変更します。カメラ一覧もそれに合わせて更新されます。",
 });

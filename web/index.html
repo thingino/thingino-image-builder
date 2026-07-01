@@ -38,6 +38,7 @@
         <div class="ms-auto d-flex align-items-center gap-2">
           <span id="lang-slot"></span>
           <a id="commit-badge" class="badge bg-info-subtle text-info border border-info-subtle text-decoration-none d-none" target="_blank" rel="noopener" title="thingino commit being built" data-i18n-title="commit_badge_title"></a>
+          <button id="settings-btn" class="btn btn-sm btn-outline-secondary py-0 px-1" title="Settings" data-i18n-title="gear_title"><i class="bi bi-gear"></i></button>
         </div>
       </div>
 
@@ -68,6 +69,31 @@
   <p class="mt-2 small text-center muted">
     <a href="https://github.com/thingino/thingino-web-builder" target="_blank" class="link-secondary text-decoration-none" data-i18n="footer_link">thingino firmware builder</a> <span id="version"></span> · <a href="admin.html" class="link-secondary text-decoration-none"><i class="bi bi-shield-lock me-1"></i><span data-i18n="admin_link">admin</span></a>
   </p>
+
+  <div id="settings-overlay" class="d-none" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1050;display:flex;align-items:center;justify-content:center;padding:1rem;">
+    <div class="card" style="width:100%;max-width:420px;">
+      <div class="card-header d-flex align-items-center gap-2">
+        <h2 class="card-title mb-0 fs-6"><i class="bi bi-gear me-1"></i> <span data-i18n="settings_title">Settings</span></h2>
+        <button id="settings-close" class="btn btn-sm btn-outline-secondary py-0 px-1 ms-auto" title="Close" data-i18n-title="close_btn"><i class="bi bi-x-lg"></i></button>
+      </div>
+      <div class="card-body">
+        <p class="small muted mb-2" data-i18n="branch_label">thingino branch to build from:</p>
+        <div class="form-check">
+          <input class="form-check-input branch-radio" type="radio" name="branch" id="branch-master" value="master">
+          <label class="form-check-label" for="branch-master">master <span class="small muted" data-i18n="branch_default">(default)</span></label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input branch-radio" type="radio" name="branch" id="branch-ciao" value="ciao">
+          <label class="form-check-label" for="branch-ciao">ciao</label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input branch-radio" type="radio" name="branch" id="branch-stable" value="stable">
+          <label class="form-check-label" for="branch-stable">stable</label>
+        </div>
+        <p class="small muted mt-3 mb-0" data-i18n="branch_note">Changes which thingino branch your firmware is built from. The camera list updates to match.</p>
+      </div>
+    </div>
+  </div>
 
   <script src="vendor/bootstrap.bundle.min.js"></script>
   <script src="i18n.js"></script>

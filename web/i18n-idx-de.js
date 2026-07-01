@@ -42,4 +42,10 @@ I18N.add("de", {
   state_cancelled: "Abgebrochen",
   build_again_btn: "Erneut erstellen",
   request_failed: "Anfrage fehlgeschlagen ({status}).",
+  gear_title: "Einstellungen",
+  settings_title: "Einstellungen",
+  close_btn: "Schließen",
+  branch_label: "thingino-Branch, aus dem gebaut wird:",
+  branch_default: "(Standard)",
+  branch_note: "Ändert, aus welchem thingino-Branch deine Firmware gebaut wird. Die Kameraliste wird entsprechend aktualisiert.",
 });

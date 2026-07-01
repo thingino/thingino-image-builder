@@ -142,15 +142,19 @@ const ghFetch = async (env, url, opts = {}) => {
   return fetch(url, { ...opts, headers: { ...ghHeaders(env, false), ...(tok ? { Authorization: `Bearer ${tok}` } : {}), ...(opts.headers || {}) } });
 };
 
-// thingino pinned commit + defconfig list, cached in D1 settings (~5 min).
-async function resolveThingino(env) {
-  const ts = parseInt((await getSetting(env, "thingino_ts")) || "0", 10);
-  let commit = await getSetting(env, "thingino_commit");
-  let listJson = await getSetting(env, "defconfigs");
+// thingino pinned commit + defconfig list, per branch, cached in D1 settings (~5 min).
+// Only these refs are buildable; anything else falls back to master (no arbitrary-ref fetch).
+const ALLOWED_REFS = ["master", "ciao", "stable"];
+const normRef = (ref) => (ALLOWED_REFS.includes(ref) ? ref : "master");
+async function resolveThingino(env, ref) {
+  ref = normRef(ref);
+  const kC = `thingino_commit_${ref}`, kL = `defconfigs_${ref}`, kT = `thingino_ts_${ref}`;
+  const ts = parseInt((await getSetting(env, kT)) || "0", 10);
+  let commit = await getSetting(env, kC);
+  let listJson = await getSetting(env, kL);
   if (commit && listJson && nowSec() - ts < 300) return { commit, list: JSON.parse(listJson) };
 
   const repo = env.THINGINO_REPO || "themactep/thingino-firmware";
-  const ref = env.THINGINO_REF || "master";
   try {
     const cr = await fetch(`https://api.github.com/repos/${repo}/commits/${ref}`, { headers: ghHeaders(env, false) });
     if (cr.ok) {
@@ -159,12 +163,12 @@ async function resolveThingino(env) {
         const list = await fetchDefconfigs(env, repo, newCommit);
         if (list.length) {
           listJson = JSON.stringify(list);
-          await setSetting(env, "defconfigs", listJson);
+          await setSetting(env, kL, listJson);
         }
         commit = newCommit;
-        await setSetting(env, "thingino_commit", commit);
+        await setSetting(env, kC, commit);
       }
-      await setSetting(env, "thingino_ts", String(nowSec()));
+      await setSetting(env, kT, String(nowSec()));
     }
   } catch (_) { /* keep last-good */ }
   return { commit: commit || null, list: listJson ? JSON.parse(listJson) : [] };
@@ -186,13 +190,13 @@ async function fetchDefconfigs(env, repo, commit) {
 }
 
 // ---- API handlers ---------------------------------------------------------
-async function handleDefconfigs(env) {
-  const { list } = await resolveThingino(env);
+async function handleDefconfigs(env, ref) {
+  const { list } = await resolveThingino(env, ref);
   return json(list, 200, env);
 }
-async function handleStats(request, env) {
+async function handleStats(request, env, ref) {
   const uid = resolveUid(request);
-  const { commit } = await resolveThingino(env);
+  const { commit } = await resolveThingino(env, ref);
   const cfg = await limits(env);
   return json({
     running: await countQ(env, "SELECT count(*) c FROM builds WHERE state='running'"),
@@ -224,7 +228,7 @@ async function handleBuild(request, env) {
   let body;
   try { body = await request.json(); } catch { return json({ error: "bad request" }, 400, env); }
   const defconfig = (body.defconfig || "").trim();
-  const { commit, list } = await resolveThingino(env);
+  const { commit, list } = await resolveThingino(env, body.ref);
   if (!list.includes(defconfig)) return json({ error: "unknown defconfig" }, 400, env);
 
   const uid = resolveUid(request);
@@ -448,7 +452,7 @@ async function schedulerStep(env) {
 }
 async function schedulerWork(env, ts) {
   const cfg = await limits(env);
-  await resolveThingino(env);
+  for (const r of ALLOWED_REFS) await resolveThingino(env, r);
 
   const running = ((await env.DB.prepare("SELECT id,run_id,dispatched_ts,cancel_requested FROM builds WHERE state='running'").all()).results) || [];
   const slots = Math.max(0, cfg.maxConcurrent - running.length);
@@ -904,11 +908,11 @@ export class RateLimiter {
 export default {
   async fetch(request, env, _ctx) {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors(env) });
-    const p = new URL(request.url).pathname;
+    const url = new URL(request.url), p = url.pathname;
     try {
       if (p === "/api/health") return new Response("ok", { headers: cors(env) });
-      if (p === "/api/defconfigs" && request.method === "GET") return await handleDefconfigs(env);
-      if (p === "/api/stats" && request.method === "GET") return await handleStats(request, env);
+      if (p === "/api/defconfigs" && request.method === "GET") return await handleDefconfigs(env, url.searchParams.get("ref"));
+      if (p === "/api/stats" && request.method === "GET") return await handleStats(request, env, url.searchParams.get("ref"));
       if (p === "/api/build" && request.method === "POST") return await handleBuild(request, env);
       let m;
       if ((m = p.match(/^\/api\/status\/(.+)$/)) && request.method === "GET") return await handleStatus(m[1], env);

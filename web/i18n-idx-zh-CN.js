@@ -42,4 +42,10 @@ I18N.add("zh-CN", {
   state_cancelled: "已取消",
   build_again_btn: "重新构建",
   request_failed: "请求失败（{status}）。",
+  gear_title: "设置",
+  settings_title: "设置",
+  close_btn: "关闭",
+  branch_label: "用于构建的 thingino 分支：",
+  branch_default: "（默认）",
+  branch_note: "更改用于构建固件的 thingino 分支。摄像头列表会相应更新。",
 });

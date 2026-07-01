@@ -42,4 +42,10 @@ I18N.add("es", {
   state_cancelled: "Cancelada",
   build_again_btn: "Compilar de nuevo",
   request_failed: "La solicitud falló ({status}).",
+  gear_title: "Ajustes",
+  settings_title: "Ajustes",
+  close_btn: "Cerrar",
+  branch_label: "rama de thingino desde la que compilar:",
+  branch_default: "(predeterminada)",
+  branch_note: "Cambia la rama de thingino desde la que se compila tu firmware. La lista de cámaras se actualiza en consecuencia.",
 });
