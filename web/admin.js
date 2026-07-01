@@ -19,7 +19,7 @@ const stateLabel=s=>{ const v=I18N.t('state_'+s); return v==='state_'+s?s:v; };
 const pill=s=>`<span class="badge ${PILL[s]||'bg-secondary'}">${esc(stateLabel(s))}</span>`;
 const tile=(l,n)=>`<div class="col-6 col-md-3 col-lg-2"><div class="card text-center h-100"><div class="card-body py-2 px-1"><div class="fs-4 fw-bold">${n??0}</div><div class="small muted text-uppercase">${l}</div></div></div></div>`;
 
-async function adminGet(){ const r=await fetch(API+'/api/admin/stats',{headers:{Authorization:'Bearer '+tok()}}); if(r.status===401) throw 0; return r.json(); }
+async function adminGet(){ const r=await fetch(API+'/api/admin/stats',{headers:{Authorization:'Bearer '+tok()}}); if(r.status===401){ const e=new Error('unauthorized'); e.auth=1; throw e; } if(!r.ok) throw new Error('http '+r.status); return r.json(); }
 let masterMode=false;
 function setMaster(on){ masterMode=on;
   $('username').style.display=on?'none':''; $('password').style.display=on?'none':''; $('token').style.display=on?'':'none';
@@ -40,7 +40,7 @@ async function logout(){ try{ await fetch(API+'/api/admin/logout',{method:'POST'
 
 let enabled=true;
 async function refresh(){
-  let d; try{ d=await adminGet(); }catch{ logout(); return; }
+  let d; try{ d=await adminGet(); }catch(e){ if(e&&e.auth) logout(); return; }
   enabled=d.builds_enabled;
   $('kill-state').innerHTML=enabled?'<span class="text-success">'+I18N.t('kill_enabled')+'</span>':'<span class="text-danger">'+I18N.t('kill_disabled')+'</span>';
   const kb=$('kill-btn'); kb.textContent=enabled?I18N.t('kill_disable'):I18N.t('kill_enable'); kb.className='btn btn-sm '+(enabled?'btn-outline-danger':'btn-thingino');
@@ -186,5 +186,5 @@ window.addEventListener('i18nchange',function(){
 });
 const inviteParam=new URLSearchParams(location.search).get('invite');
 if(inviteParam){ startEnroll(inviteParam); }
-else if(tok()){ adminGet().then(show).catch(()=>localStorage.removeItem(TK)); }
+else if(tok()){ adminGet().then(show).catch(e=>{ if(e&&e.auth) localStorage.removeItem(TK); else show(); }); }
 setInterval(()=>{ if($('app').style.display!=='none') refresh(); },5000);
