@@ -58,4 +58,5 @@ I18N.add("en", {
   help_settings: "Settings — choose which thingino branch to build from.",
   help_branch: "Pick the thingino branch to build: master (default), ciao, or stable. The camera list updates to match.",
   setting_help_label: "Show help hints — hover any control for a tip (or use the ? button).",
+  privacy_link: "privacy",
 });

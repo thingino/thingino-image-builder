@@ -58,4 +58,5 @@ I18N.add("es", {
   help_settings: "Ajustes — elige desde qué rama de thingino compilar.",
   help_branch: "Elige la rama de thingino a compilar: master (predeterminada), ciao o stable. La lista de cámaras se actualiza en consecuencia.",
   setting_help_label: "Muestra sugerencias de ayuda — pasa el cursor sobre cualquier control para ver un consejo (o usa el botón ?).",
+  privacy_link: "privacidad",
 });

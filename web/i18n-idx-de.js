@@ -58,4 +58,5 @@ I18N.add("de", {
   help_settings: "Einstellungen — wähle, aus welchem thingino-Branch gebaut wird.",
   help_branch: "Wähle den thingino-Branch zum Bauen: master (Standard), ciao oder stable. Die Kameraliste wird entsprechend aktualisiert.",
   setting_help_label: "Hilfehinweise anzeigen — fahre über ein beliebiges Element für einen Tipp (oder nutze die Schaltfläche ?).",
+  privacy_link: "Datenschutz",
 });

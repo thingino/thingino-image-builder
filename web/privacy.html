@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- Don't cache the page shell, so a redeploy is picked up without a hard reload. GitHub Pages
+       ignores these (it serves max-age=600), so the network-first sw.js below is the real fix. -->
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://*.workers.dev; worker-src 'self'; object-src 'none'; base-uri 'none'">
+  <script src="sw-register.js"></script>
+  <title>thingino · Privacy Policy</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="icon" type="image/x-icon" href="favicon.ico">
+  <link href="vendor/bootstrap.min.css" rel="stylesheet">
+  <link href="vendor/bootstrap-icons.min.css" rel="stylesheet">
+  <link href="vendor/montserrat.css" rel="stylesheet">
+  <style>
+    :root { --bs-font-sans-serif: "Montserrat", sans-serif; }
+    body { min-height:100vh; display:flex; flex-direction:column; align-items:center; background:#0d1117; }
+    .doc-card { width:100%; max-width:720px; }
+    .card-title { color: darkorange !important; }
+    h2 { color: darkorange; font-size:1.02rem; margin-top:1.3rem; }
+    code { color: darkorange; }
+    .muted { color:#8b949e !important; }
+    a { color:#ff9e2c; }
+    @media (max-width:576px){ body{ padding:.5rem !important; } }
+  </style>
+</head>
+<body class="p-3">
+  <div class="doc-card">
+    <div class="card mb-3">
+      <div class="card-header d-flex align-items-center gap-2 flex-wrap">
+        <h1 class="card-title mb-0 fs-5"><i class="bi bi-shield-check me-1"></i> Privacy Policy</h1>
+        <a href="index.html" class="ms-auto small link-secondary text-decoration-none"><i class="bi bi-arrow-left me-1"></i>back to the builder</a>
+      </div>
+      <div class="card-body">
+        <p class="muted small mb-3">thingino Firmware Builder — last updated 30 June 2026</p>
+        <p>thingino Firmware Builder is a free community tool for compiling thingino camera firmware. We collect as little as possible — <strong>no accounts, no cookies, no analytics, no third-party trackers.</strong></p>
+
+        <h2>What we log</h2>
+        <ul>
+          <li><strong>Your IP address</strong>, with each build request — used only to enforce rate limits and stop abuse (e.g. flooding the build queue). IPv6 addresses are grouped to a <code>/64</code> network.</li>
+          <li><strong>An anonymous builder ID</strong> — a random value we generate that your browser stores, so we can show you <em>your</em> build's status. It isn't linked to your identity.</li>
+          <li><strong>The camera profile (defconfig) and branch you build</strong> — needed to run the build, and kept for basic operational stats.</li>
+        </ul>
+        <p>We do not collect names, emails, passwords, or other personal data.</p>
+
+        <h2>Builds and downloads are public</h2>
+        <p>Your firmware is compiled on <strong>GitHub Actions</strong> and published as a <strong>public download</strong> (a GitHub release asset). While it exists — about <strong>30 minutes</strong>, then it's auto-deleted — anyone with the link can fetch it. The images hold no personal data, but the link isn't secret.</p>
+
+        <h2>Who processes your data</h2>
+        <p>The site is served by <strong>GitHub Pages</strong>, the build API runs on <strong>Cloudflare Workers</strong>, and builds run on <strong>GitHub Actions</strong>. Your requests and IP pass through Cloudflare and GitHub, each with its own privacy policy.</p>
+
+        <h2>Retention</h2>
+        <p>IP addresses and request logs are kept only briefly, for abuse prevention, and are purged periodically. Built images are removed after ~30 minutes.</p>
+
+        <h2>Stored in your browser</h2>
+        <p>A few preferences live on your device — language, help-hints on/off, selected branch, and your anonymous build ID. Only the build ID is ever sent to the service.</p>
+
+        <h2>Changes &amp; contact</h2>
+        <p>We may update this policy; the date above shows the latest version. Questions: open an issue at <a href="https://github.com/thingino/thingino-web-builder" target="_blank" rel="noopener">github.com/thingino/thingino-web-builder</a>.</p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

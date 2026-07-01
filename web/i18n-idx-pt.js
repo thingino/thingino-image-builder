@@ -58,4 +58,5 @@ I18N.add("pt", {
   help_settings: "Configurações — escolha de qual branch do thingino compilar.",
   help_branch: "Escolha a branch do thingino a compilar: master (padrão), ciao ou stable. A lista de câmeras é atualizada de acordo.",
   setting_help_label: "Mostra as dicas de ajuda — passe o cursor sobre qualquer controle para ver uma dica (ou use o botão ?).",
+  privacy_link: "privacidade",
 });
