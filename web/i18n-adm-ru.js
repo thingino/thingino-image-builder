@@ -141,4 +141,5 @@ I18N.add("ru", {
   ago_hours: "{n} ч назад",
   confirm_cancel_build: "Отменить сборку {id}?",
   confirm_remove_build: "Удалить артефакт + запуск Actions для {id} сейчас?",
+  priv_manage_users: "управление пользователями",
 });

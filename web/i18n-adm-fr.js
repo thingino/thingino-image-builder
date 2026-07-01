@@ -141,4 +141,5 @@ I18N.add("fr", {
   ago_hours: "il y a {n} h",
   confirm_cancel_build: "Annuler la génération {id} ?",
   confirm_remove_build: "Supprimer l'artefact + l'exécution Actions pour {id} maintenant ?",
+  priv_manage_users: "gérer les utilisateurs",
 });

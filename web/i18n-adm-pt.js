@@ -141,4 +141,5 @@ I18N.add("pt", {
   ago_hours: "há {n}h",
   confirm_cancel_build: "Cancelar a compilação {id}?",
   confirm_remove_build: "Remover o artefato + execução do Actions de {id} agora?",
+  priv_manage_users: "gerenciar usuários",
 });

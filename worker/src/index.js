@@ -16,7 +16,7 @@ const WINDOW = 3600;
 const DAY = 86400;
 // Per-admin privileged actions. Named admins are granted a subset; the master always
 // has all of them. Everything else in the admin panel stays open to any admin.
-const ADMIN_PRIVS = ["clear_logs", "clear_builds", "reset_limits", "edit_limits", "kill_switch"];
+const ADMIN_PRIVS = ["clear_logs", "clear_builds", "reset_limits", "edit_limits", "kill_switch", "manage_users"];
 
 const nowSec = () => Math.floor(Date.now() / 1000);
 const uuid = () => crypto.randomUUID();
@@ -702,7 +702,9 @@ async function handleAdminLogout(request, env) {
 
 // --- Admin user management (master token only) + invite self-enrollment ----
 async function handleAdminInvite(request, env) {
-  if ((await sessionAdmin(request, env)) !== "master") return json({ error: "master token required" }, 403, env);
+  const who = await sessionAdmin(request, env);
+  if (!who) return json({ error: "admin auth required" }, 401, env);
+  if (!(await adminCan(env, who, "manage_users"))) return json({ error: "not permitted" }, 403, env);
   let body; try { body = await request.json(); } catch { return json({ error: "bad request" }, 400, env); }
   const u = String(body.username || "").toLowerCase().trim();
   if (!/^[a-z0-9_.-]{3,32}$/.test(u)) return json({ error: "username must be 3-32 chars: a-z 0-9 . _ -" }, 400, env);
@@ -711,12 +713,14 @@ async function handleAdminInvite(request, env) {
     return json({ error: "that username already exists" }, 409, env);
   const token = randToken(), secret = newTotpSecret(), exp = nowSec() + 60 * 60;
   await env.DB.prepare("INSERT INTO admins(username,totp_secret,invite_token,invite_expires,created_ts,created_by) VALUES(?,?,?,?,?,?)")
-    .bind(u, secret, token, exp, nowSec(), "master").run();
+    .bind(u, secret, token, exp, nowSec(), who).run();
   await logEvent(env, "admin_user_invited", null, null, null, `invited ${u}`);
   return json({ ok: true, username: u, invite_token: token, expires_in: 60 * 60 }, 200, env);
 }
 async function handleAdminListUsers(request, env) {
-  if ((await sessionAdmin(request, env)) !== "master") return json({ error: "master token required" }, 403, env);
+  const who = await sessionAdmin(request, env);
+  if (!who) return json({ error: "admin auth required" }, 401, env);
+  if (!(await adminCan(env, who, "manage_users"))) return json({ error: "not permitted" }, 403, env);
   const rows = (await env.DB.prepare("SELECT username,pw_hash,invite_token,invite_expires,disabled,created_ts,last_login,privileges FROM admins ORDER BY created_ts DESC").all()).results || [];
   const users = rows.map((r) => {
     let privileges = [];
@@ -730,7 +734,9 @@ async function handleAdminListUsers(request, env) {
   return json({ users }, 200, env);
 }
 async function handleAdminDeleteUser(username, request, env) {
-  if ((await sessionAdmin(request, env)) !== "master") return json({ error: "master token required" }, 403, env);
+  const who = await sessionAdmin(request, env);
+  if (!who) return json({ error: "admin auth required" }, 401, env);
+  if (!(await adminCan(env, who, "manage_users"))) return json({ error: "not permitted" }, 403, env);
   const u = String(username).toLowerCase();
   const r = await env.DB.prepare("DELETE FROM admins WHERE username=?").bind(u).run();
   await env.DB.prepare("DELETE FROM sessions WHERE admin=?").bind(u).run();
@@ -738,7 +744,9 @@ async function handleAdminDeleteUser(username, request, env) {
   return json({ ok: true, deleted: r.meta?.changes ?? 0 }, 200, env);
 }
 async function handleAdminDisableUser(username, request, env) {
-  if ((await sessionAdmin(request, env)) !== "master") return json({ error: "master token required" }, 403, env);
+  const who = await sessionAdmin(request, env);
+  if (!who) return json({ error: "admin auth required" }, 401, env);
+  if (!(await adminCan(env, who, "manage_users"))) return json({ error: "not permitted" }, 403, env);
   let body; try { body = await request.json(); } catch { body = {}; }
   const u = String(username).toLowerCase(), dis = body.disabled ? 1 : 0;
   await env.DB.prepare("UPDATE admins SET disabled=? WHERE username=?").bind(dis, u).run();
@@ -816,7 +824,7 @@ async function handleAdminStats(request, env) {
     },
     recent_builds: builds, recent_events: events,
     version: env.VERSION || "v0.1.0", latest_version: null, update_available: false,
-    me, master: me === "master",
+    me, master: me === "master", manage_users: await adminCan(env, me, "manage_users"),
   }, 200, env);
 }
 async function handleAdminToggle(request, env) {

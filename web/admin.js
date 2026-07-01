@@ -54,7 +54,7 @@ async function refresh(){
     $('upd-btn').style.display='none';
   }
   renderLimits(d.limits, d.usage);
-  if(d.master){ if(!usersShown){ $('users-card').style.display=''; usersShown=true; renderUsers(); } } else $('users-card').style.display='none';
+  isMaster=!!d.master; if(d.master||d.manage_users){ if(!usersShown){ $('users-card').style.display=''; usersShown=true; renderUsers(); } } else $('users-card').style.display='none';
   const c=d.counts||{};
   $('tiles').innerHTML=[['state_running',c.running],['state_queued',c.queued],['state_done',c.done],['state_failed',c.failed],['state_cancelled',c.cancelled],['state_expired',c.expired],['tile_24h',d.last24h],['tile_avg_build',d.avg_build_secs?Math.round(d.avg_build_secs/60)+'m':'–']].map(([k,n])=>tile(I18N.t(k),n)).join('');
   $('builds-body').innerHTML=(d.recent_builds||[]).map(b=>`<tr><td><code>${esc(short(b.build_id))}</code></td><td>${esc(b.defconfig)}</td><td>${pill(b.state)}${buildAction(b)}</td><td><code>${esc(short(b.uid))}</code></td><td>${ipcell(b.ip,b.ip_bucket)}</td><td>${ago(b.created_ts)}</td><td>${dur(b.dispatched_ts,b.finished_ts)}</td><td><code>${esc(b.run_id)}</code></td></tr>`).join('');
@@ -91,9 +91,9 @@ async function doUpdate(){
 }
 
 // --- admin user management (master only) + invite enrollment ---
-let usersShown=false;
-const PRIVS=['clear_logs','clear_builds','reset_limits','edit_limits','kill_switch'];
-const privCell=u=>PRIVS.map(p=>`<label class="me-2 small" style="white-space:nowrap"><input type="checkbox" class="privbox" data-u="${esc(u.username)}" data-p="${p}" ${(u.privileges||[]).includes(p)?'checked':''}> ${I18N.t('priv_'+p)}</label>`).join('');
+let usersShown=false, isMaster=false;
+const PRIVS=['clear_logs','clear_builds','reset_limits','edit_limits','kill_switch','manage_users'];
+const privCell=u=>isMaster?PRIVS.map(p=>`<label class="me-2 small" style="white-space:nowrap"><input type="checkbox" class="privbox" data-u="${esc(u.username)}" data-p="${p}" ${(u.privileges||[]).includes(p)?'checked':''}> ${I18N.t('priv_'+p)}</label>`).join(''):(u.privileges||[]).map(p=>`<span class="badge bg-secondary me-1">${esc(I18N.t('priv_'+p))}</span>`).join('');
 async function renderUsers(){
   const r=await fetch(API+'/api/admin/users',{headers:{Authorization:'Bearer '+tok()}});
   if(!r.ok) return; const d=await r.json().catch(()=>({}));

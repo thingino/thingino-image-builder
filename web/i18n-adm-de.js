@@ -141,4 +141,5 @@ I18N.add("de", {
   ago_hours: "vor {n}h",
   confirm_cancel_build: "Build {id} abbrechen?",
   confirm_remove_build: "Artefakt + Actions-Run für {id} jetzt entfernen?",
+  priv_manage_users: "Benutzer verwalten",
 });

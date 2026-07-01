@@ -141,4 +141,5 @@ I18N.add("ja", {
   ago_hours: "{n}時間前",
   confirm_cancel_build: "ビルド {id} をキャンセルしますか？",
   confirm_remove_build: "{id} のアーティファクトと Actions 実行を今すぐ削除しますか？",
+  priv_manage_users: "ユーザー管理",
 });

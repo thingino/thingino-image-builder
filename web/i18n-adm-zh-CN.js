@@ -141,4 +141,5 @@ I18N.add("zh-CN", {
   ago_hours: "{n} 小时前",
   confirm_cancel_build: "取消构建 {id}？",
   confirm_remove_build: "立即移除 {id} 的工件 + Actions 运行记录？",
+  priv_manage_users: "管理用户",
 });
