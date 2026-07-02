@@ -1,4 +1,4 @@
-// Thingino web-builder — Cloudflare Worker broker (proof of concept).
+// Thingino Image Builder — Cloudflare Worker broker (proof of concept).
 //
 // Ports the core of the Rust/VPS broker onto Cloudflare's free tier:
 //   * fetch handler  = the HTTP API (build / status / cancel / stats / defconfigs)
@@ -97,7 +97,7 @@ function ghHeaders(env, auth) {
   const h = {
     Accept: "application/vnd.github+json",
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "thingino-web-builder-worker",
+    "User-Agent": "thingino-image-builder-worker",
   };
   if (auth && env.GITHUB_TOKEN) h.Authorization = `Bearer ${env.GITHUB_TOKEN}`;
   return h;
@@ -767,7 +767,7 @@ async function handleAdminSetPrivileges(username, request, env) {
 }
 // Invite enrollment (no session — the invitee isn't an admin yet).
 const inviteOtpauth = (username, secret) => {
-  const issuer = "thingino web-builder";
+  const issuer = "thingino image builder";
   return `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(username)}?secret=${secret}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`;
 };
 async function handleGetInvite(token, env) {

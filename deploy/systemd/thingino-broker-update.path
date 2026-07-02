@@ -2,7 +2,7 @@
 # button) and triggers the image update. Installed to /etc/systemd/system by
 # deploy.sh, which substitutes @DIR@ with the repo path.
 [Unit]
-Description=Watch for thingino-web-builder update requests
+Description=Watch for thingino-image-builder update requests
 
 [Path]
 PathExists=@DIR@/state/update.request

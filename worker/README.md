@@ -121,7 +121,7 @@ Cloudflare Workers, GitHub Actions) and the brief retention, and confirms no coo
 accounts, or trackers.
 
 **Custom domain** (the `webflash.thingino.com` model, no Cloudflare DNS required):
-add a `CNAME` DNS record at your registrar (`web-builder.thingino.com → <org>.github.io`)
+add a `CNAME` DNS record at your registrar (`image-builder.thingino.com → <org>.github.io`)
 and uncomment the `CNAME` line in `pages.yml`.
 
 ## Admin

@@ -1,4 +1,4 @@
-# thingino-web-builder
+# thingino-image-builder
 
 A public, rate-limited **web firmware builder** for
 [thingino](https://github.com/themactep/thingino-firmware). Pick a camera
@@ -79,15 +79,15 @@ both free tier. Guide → **[worker/README.md](worker/README.md)**.
 Let's Encrypt or BYO certs). Guide → **[DEPLOY.md](DEPLOY.md)** (short version):
 
 ```bash
-sudo git clone https://github.com/thingino/thingino-web-builder.git /opt/thingino-web-builder
-cd /opt/thingino-web-builder
+sudo git clone https://github.com/thingino/thingino-image-builder.git /opt/thingino-image-builder
+cd /opt/thingino-image-builder
 sudo ./setup.sh          # generate admin token + TOTP (prints a QR)
 # edit .env: DOMAIN, GITHUB_REPO, and a GITHUB_TOKEN (or a GitHub App)
 sudo ./deploy.sh         # pull the ghcr image, install Quadlet units, start
 ```
 
 The broker image is built by CI and published to
-`ghcr.io/thingino/thingino-web-builder`, so the box just pulls it, no toolchain
+`ghcr.io/thingino/thingino-image-builder`, so the box just pulls it, no toolchain
 needed. The admin panel offers a one-click **self-update** when a newer image ships.
 
 ## Local dev

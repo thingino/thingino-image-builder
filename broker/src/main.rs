@@ -1,4 +1,4 @@
-//! Thingino web-builder broker — control plane + scheduler.
+//! Thingino Image Builder broker — control plane + scheduler.
 //!
 //! It NEVER builds. It:
 //!   * serves the static frontend (same-origin, no CORS),
@@ -489,7 +489,7 @@ fn encode_uri_component(s: &str) -> String {
 }
 /// otpauth:// URL for the invitee's authenticator (matches the Worker's inviteOtpauth).
 fn invite_otpauth(username: &str, secret: &str) -> String {
-    let issuer = "thingino web-builder";
+    let issuer = "thingino image builder";
     format!(
         "otpauth://totp/{}:{}?secret={}&issuer={}&algorithm=SHA1&digits=6&period=30",
         encode_uri_component(issuer),
@@ -705,7 +705,7 @@ async fn main() -> anyhow::Result<()> {
     let _ = conn.execute("ALTER TABLE admins ADD COLUMN last_totp_step INTEGER", []);
 
     let http = reqwest::Client::builder()
-        .user_agent("thingino-web-builder-broker")
+        .user_agent("thingino-image-builder-broker")
         .build()?;
 
     let state = AppState {

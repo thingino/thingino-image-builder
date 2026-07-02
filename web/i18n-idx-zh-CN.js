@@ -1,9 +1,9 @@
 // Simplified Chinese (zh-CN) strings for the public builder page.
 I18N.add("zh-CN", {
   // index.html: static
-  page_title: "thingino · 固件构建器",
-  header_full: " Thingino 固件构建器",
-  header_short: " Thingino 构建器",
+  page_title: "thingino · 镜像构建器",
+  header_full: " Thingino 镜像构建器",
+  header_short: " Thingino 镜像构建器",
   commit_badge_title: "正在构建的 thingino 提交",
   connecting: "连接中…",
   camera_label: "摄像头 defconfig",
@@ -11,7 +11,7 @@ I18N.add("zh-CN", {
   build_btn: "构建",
   loading_cameras: "正在加载摄像头列表…",
   footer_limits: "构建在 GitHub Actions 上运行（约 20–40 分钟），请耐心等待。用户限制：每位用户 <strong>每小时 2 次构建</strong>，同时最多 <strong>6</strong> 个。完成的镜像可下载 <strong>30 分钟</strong>，之后将被删除。",
-  footer_link: "thingino 固件构建器",
+  footer_link: "thingino 镜像构建器",
   admin_link: "管理后台",
   // app.js: dynamic
   min_approx: "约 {n} 分钟",

@@ -1,7 +1,7 @@
 // Portuguese (Brazilian) strings for the admin page.
 I18N.add("pt", {
   // document title
-  page_title: "thingino · Admin do Construtor",
+  page_title: "thingino · Admin do Construtor de Imagens",
   // gate / login (static)
   gate_title: "Admin",
   signin_hint: "Entre com seu nome de usuário admin, senha e código de 6 dígitos.",
@@ -32,7 +32,7 @@ I18N.add("pt", {
   invalid_invite: "convite inválido",
 
   // app header
-  app_title: "Construtor Thingino Admin",
+  app_title: "Construtor de Imagens Thingino Admin",
   signout_btn: "Sair",
   updated: "atualizado {t}",
 

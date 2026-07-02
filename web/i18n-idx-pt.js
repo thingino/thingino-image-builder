@@ -1,9 +1,9 @@
 // Portuguese (Brazilian) strings for the public builder page.
 I18N.add("pt", {
   // index.html: static
-  page_title: "thingino · Construtor de Firmware",
-  header_full: " Construtor de Firmware Thingino",
-  header_short: " Construtor Thingino",
+  page_title: "thingino · Construtor de Imagens",
+  header_full: " Construtor de Imagens Thingino",
+  header_short: " Construtor de Imagens Thingino",
   commit_badge_title: "commit do thingino sendo compilado",
   connecting: "Conectando…",
   camera_label: "Defconfig da câmera",
@@ -11,7 +11,7 @@ I18N.add("pt", {
   build_btn: "Compilar",
   loading_cameras: "Carregando lista de câmeras…",
   footer_limits: "As compilações rodam no GitHub Actions (~20–40 min), então tenha paciência. Limites: <strong>2 compilações/hora</strong> por usuário e <strong>6</strong> no total ao mesmo tempo. As imagens finalizadas ficam disponíveis para download por <strong>30 minutos</strong>, depois são removidas.",
-  footer_link: "construtor de firmware thingino",
+  footer_link: "construtor de imagens thingino",
   admin_link: "admin",
   // app.js: dynamic
   min_approx: "~{n} min",

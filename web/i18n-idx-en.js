@@ -1,9 +1,9 @@
 // English baseline strings for the public builder page: single source of keys.
 I18N.add("en", {
   // index.html: static
-  page_title: "thingino · Firmware Builder",
-  header_full: " Thingino Firmware Builder",
-  header_short: " Thingino Builder",
+  page_title: "thingino · Image Builder",
+  header_full: " Thingino Image Builder",
+  header_short: " Thingino Image Builder",
   commit_badge_title: "thingino commit being built",
   connecting: "Connecting…",
   camera_label: "Camera defconfig",
@@ -11,7 +11,7 @@ I18N.add("en", {
   build_btn: "Build",
   loading_cameras: "Loading camera list…",
   footer_limits: "Builds run on GitHub Actions (~20–40 min), so please be patient. User limits: <strong>2 builds/hour</strong> per user, <strong>6</strong> total at a time. Finished images are available to download for <strong>30 minutes</strong>, then they're removed.",
-  footer_link: "thingino firmware builder",
+  footer_link: "thingino image builder",
   admin_link: "admin",
   // app.js: dynamic
   min_approx: "~{n} min",

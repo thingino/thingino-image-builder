@@ -1,7 +1,7 @@
 // French strings for the admin page: mirrors i18n-adm-en.js keys.
 I18N.add("fr", {
   // document title
-  page_title: "thingino · Admin du générateur",
+  page_title: "thingino · Admin du générateur d'images",
   // gate / login (static)
   gate_title: "Admin",
   signin_hint: "Connectez-vous avec votre nom d'utilisateur admin, votre mot de passe et votre code à 6 chiffres.",
@@ -32,7 +32,7 @@ I18N.add("fr", {
   invalid_invite: "invitation invalide",
 
   // app header
-  app_title: "Générateur Thingino Admin",
+  app_title: "Générateur d'images Thingino Admin",
   signout_btn: "Se déconnecter",
   updated: "mis à jour {t}",
 

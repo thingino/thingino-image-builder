@@ -1,7 +1,7 @@
 # Quadlet unit (rootful): /etc/containers/systemd/thingino-caddy.container
 # @DIR@ is substituted with the repo path by deploy.sh.
 [Unit]
-Description=Thingino web-builder — Caddy TLS edge
+Description=Thingino Image Builder — Caddy TLS edge
 Requires=thingino-broker.service
 After=thingino-broker.service network-online.target
 Wants=network-online.target

@@ -1,9 +1,9 @@
 // Japanese (ja) strings for the public builder page: keys mirror i18n-idx-en.js.
 I18N.add("ja", {
   // index.html: static
-  page_title: "thingino · ファームウェアビルダー",
-  header_full: " Thingino ファームウェアビルダー",
-  header_short: " Thingino ビルダー",
+  page_title: "thingino · イメージビルダー",
+  header_full: " Thingino イメージビルダー",
+  header_short: " Thingino イメージビルダー",
   commit_badge_title: "ビルド中の thingino コミット",
   connecting: "接続中…",
   camera_label: "カメラ defconfig",
@@ -11,7 +11,7 @@ I18N.add("ja", {
   build_btn: "ビルド",
   loading_cameras: "カメラ一覧を読み込み中…",
   footer_limits: "ビルドは GitHub Actions 上で実行されます（約20–40分）。しばらくお待ちください。利用制限: ユーザーごとに <strong>1時間あたり2ビルド</strong>、同時に合計 <strong>6</strong> 件まで。完成したイメージは <strong>30分間</strong> ダウンロードでき、その後削除されます。",
-  footer_link: "thingino ファームウェアビルダー",
+  footer_link: "thingino イメージビルダー",
   admin_link: "管理",
   // app.js: dynamic
   min_approx: "約{n}分",

@@ -1,7 +1,7 @@
 // English baseline strings for the admin page: single source of keys.
 I18N.add("en", {
   // document title
-  page_title: "thingino · Builder Admin",
+  page_title: "thingino · Image Builder Admin",
   // gate / login (static)
   gate_title: "Admin",
   signin_hint: "Sign in with your admin username, password, and 6-digit code.",
@@ -32,7 +32,7 @@ I18N.add("en", {
   invalid_invite: "invalid invite",
 
   // app header
-  app_title: "Thingino Builder Admin",
+  app_title: "Thingino Image Builder Admin",
   signout_btn: "Sign out",
   updated: "updated {t}",
 

@@ -1,9 +1,9 @@
 // French strings for the public builder page: mirrors i18n-idx-en.js keys.
 I18N.add("fr", {
   // index.html: static
-  page_title: "thingino · Générateur de firmware",
-  header_full: " Générateur de firmware Thingino",
-  header_short: " Générateur Thingino",
+  page_title: "thingino · Générateur d'images",
+  header_full: " Générateur d'images Thingino",
+  header_short: " Générateur d'images Thingino",
   commit_badge_title: "commit thingino en cours de génération",
   connecting: "Connexion…",
   camera_label: "defconfig de la caméra",
@@ -11,7 +11,7 @@ I18N.add("fr", {
   build_btn: "Générer",
   loading_cameras: "Chargement de la liste des caméras…",
   footer_limits: "Les générations s'exécutent sur GitHub Actions (~20–40 min), merci de patienter. Limites par utilisateur : <strong>2 générations/heure</strong>, <strong>6</strong> au total simultanément. Les images terminées sont téléchargeables pendant <strong>30 minutes</strong>, puis elles sont supprimées.",
-  footer_link: "générateur de firmware thingino",
+  footer_link: "générateur d'images thingino",
   admin_link: "admin",
   // app.js: dynamic
   min_approx: "~{n} min",

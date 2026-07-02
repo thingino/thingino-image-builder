@@ -1,7 +1,7 @@
 // German strings for the admin page: keys mirror i18n-adm-en.js.
 I18N.add("de", {
   // document title
-  page_title: "thingino · Builder-Admin",
+  page_title: "thingino · Image-Builder-Admin",
   // gate / login (static)
   gate_title: "Admin",
   signin_hint: "Melden Sie sich mit Admin-Benutzername, Passwort und 6-stelligem Code an.",
@@ -32,7 +32,7 @@ I18N.add("de", {
   invalid_invite: "ungültige Einladung",
 
   // app header
-  app_title: "Thingino Builder Admin",
+  app_title: "Thingino Image-Builder Admin",
   signout_btn: "Abmelden",
   updated: "aktualisiert {t}",
 

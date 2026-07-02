@@ -1,7 +1,7 @@
 # Quadlet unit (rootful): /etc/containers/systemd/thingino-broker.container
 # @DIR@ is substituted with the repo path by deploy.sh.
 [Unit]
-Description=Thingino web-builder broker
+Description=Thingino Image Builder broker
 After=network-online.target
 Wants=network-online.target
 

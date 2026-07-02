@@ -1,7 +1,7 @@
 // Spanish strings for the admin page: same keys as the English baseline.
 I18N.add("es", {
   // título del documento
-  page_title: "thingino · Admin del Compilador",
+  page_title: "thingino · Admin del Constructor de Imágenes",
   // puerta / inicio de sesión (estático)
   gate_title: "Admin",
   signin_hint: "Inicia sesión con tu usuario de administrador, contraseña y código de 6 dígitos.",
@@ -32,7 +32,7 @@ I18N.add("es", {
   invalid_invite: "invitación no válida",
 
   // encabezado de la app
-  app_title: "Compilador Thingino Admin",
+  app_title: "Constructor de Imágenes Thingino Admin",
   signout_btn: "Cerrar sesión",
   updated: "actualizado {t}",
 

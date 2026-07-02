@@ -1,4 +1,4 @@
-# Thingino web-builder — CI build worker.
+# Thingino Image Builder — CI build worker.
 #
 # Triggered by the broker via repository_dispatch:
 #   event_type: web-build
@@ -232,7 +232,7 @@ jobs:
           REPO="${{ github.repository }}"
           if ! gh release view "$ROLLING_TAG" --repo "$REPO" >/dev/null 2>&1; then
             gh release create "$ROLLING_TAG" --repo "$REPO" --prerelease \
-              --title "Web builder images" \
+              --title "Image Builder images" \
               --notes "Rolling pre-release. Each asset is a user-requested build named <build_id>.bin."
           fi
           gh release upload "$ROLLING_TAG" \

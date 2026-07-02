@@ -1,6 +1,6 @@
 # Publish the static UI (web/) to GitHub Pages at the custom domain, talking to the
 # Cloudflare Worker API. git push = deploy. The DNS (CNAME at your registrar) is the
-# only manual, one-time step: web-builder.thingino.com -> thingino.github.io.
+# only manual, one-time step: image-builder.thingino.com -> thingino.github.io.
 name: pages
 on:
   push:
@@ -29,10 +29,10 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
       - name: Point the UI at the Worker
         run: |
-          echo "window.API_BASE='https://thingino-web-builder.gtxent.workers.dev';" > web/config.js
+          echo "window.API_BASE='https://thingino-image-builder.gtxent.workers.dev';" > web/config.js
           # Custom domain disabled for now (no DNS yet) — serves at thingino.github.io/<repo>/.
-          # To enable web-builder.thingino.com later: add the CNAME DNS record, then
-          #   echo "web-builder.thingino.com" > web/CNAME
+          # To enable image-builder.thingino.com later: add the CNAME DNS record, then
+          #   echo "image-builder.thingino.com" > web/CNAME
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with:

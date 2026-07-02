@@ -1,4 +1,4 @@
-# Deploying the Thingino web-builder (Podman)
+# Deploying the Thingino Image Builder (Podman)
 
 Two containers managed by **systemd via Podman Quadlet**, no daemon:
 
@@ -17,8 +17,8 @@ The actual firmware builds run on GitHub Actions, so a tiny VPS is plenty.
 ## Deploy
 
 ```bash
-sudo git clone https://github.com/thingino/thingino-web-builder.git /opt/thingino-web-builder
-cd /opt/thingino-web-builder
+sudo git clone https://github.com/thingino/thingino-image-builder.git /opt/thingino-image-builder
+cd /opt/thingino-image-builder
 
 sudo ./setup.sh                  # generates ADMIN_TOKEN + ADMIN_TOTP_SECRET, prints a QR
 #   -> scan the QR into Google Authenticator
@@ -34,12 +34,12 @@ invited some. The Rust broker has the **full admin feature set**: named accounts
 logs/builds, same as the Worker, plus one-click container **self-update**. Caddy
 fetches a Let's Encrypt cert automatically on first start.
 
-The broker image is **built by CI and published to `ghcr.io/thingino/thingino-web-builder`**;
+The broker image is **built by CI and published to `ghcr.io/thingino/thingino-image-builder`**;
 `deploy.sh` pulls it (no toolchain needed on the box). A **release** is cut by pushing
 a `v*` tag: the workflow publishes `:vX.Y.Z` + `:latest` + a GitHub Release. Pin a
 specific version with `IMAGE_TAG=v1.2.0 sudo ./deploy.sh` (default `latest`).
 
-> Clone to a stable path like `/opt/thingino-web-builder`: the Quadlet units
+> Clone to a stable path like `/opt/thingino-image-builder`: the Quadlet units
 > reference this directory for `.env`, the `Caddyfile`, and `./certs`.
 
 ## The GitHub token

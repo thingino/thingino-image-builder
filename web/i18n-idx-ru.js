@@ -1,9 +1,9 @@
 // Russian strings for the public builder page: keys mirror i18n-idx-en.js.
 I18N.add("ru", {
   // index.html: static
-  page_title: "thingino · Сборщик прошивки",
-  header_full: " Сборщик прошивки Thingino",
-  header_short: " Сборщик Thingino",
+  page_title: "thingino · Сборщик образов",
+  header_full: " Сборщик образов Thingino",
+  header_short: " Сборщик образов Thingino",
   commit_badge_title: "собираемый коммит thingino",
   connecting: "Подключение…",
   camera_label: "defconfig камеры",
@@ -11,7 +11,7 @@ I18N.add("ru", {
   build_btn: "Собрать",
   loading_cameras: "Загрузка списка камер…",
   footer_limits: "Сборки выполняются в GitHub Actions (~20–40 мин), поэтому наберитесь терпения. Ограничения: <strong>2 сборки/час</strong> на пользователя, <strong>6</strong> одновременно. Готовые образы доступны для скачивания в течение <strong>30 минут</strong>, затем удаляются.",
-  footer_link: "сборщик прошивки thingino",
+  footer_link: "сборщик образов thingino",
   admin_link: "админ",
   // app.js: dynamic
   min_approx: "~{n} мин",

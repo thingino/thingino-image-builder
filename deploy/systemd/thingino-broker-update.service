@@ -3,7 +3,7 @@
 # AutoUpdate=registry (the broker) and restarts it. Runs on the host, so the
 # broker container itself never needs podman/socket access.
 [Unit]
-Description=Update the thingino-web-builder broker image
+Description=Update the thingino-image-builder broker image
 
 [Service]
 Type=oneshot

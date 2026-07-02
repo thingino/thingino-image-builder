@@ -1,7 +1,7 @@
 // Simplified Chinese (zh-CN) strings for the admin page.
 I18N.add("zh-CN", {
   // document title
-  page_title: "thingino · 构建器管理",
+  page_title: "thingino · 镜像构建器管理",
   // gate / login (static)
   gate_title: "管理后台",
   signin_hint: "使用您的管理员用户名、密码和 6 位验证码登录。",
@@ -32,7 +32,7 @@ I18N.add("zh-CN", {
   invalid_invite: "邀请无效",
 
   // app header
-  app_title: "Thingino 构建器管理",
+  app_title: "Thingino 镜像构建器管理",
   signout_btn: "退出登录",
   updated: "更新于 {t}",
 

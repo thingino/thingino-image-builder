@@ -1,7 +1,7 @@
 // Russian strings for the admin page: keys mirror i18n-adm-en.js.
 I18N.add("ru", {
   // document title
-  page_title: "thingino · Администрирование сборщика",
+  page_title: "thingino · Администрирование сборщика образов",
   // gate / login (static)
   gate_title: "Администрирование",
   signin_hint: "Войдите, используя имя администратора, пароль и 6-значный код.",
@@ -32,7 +32,7 @@ I18N.add("ru", {
   invalid_invite: "недействительное приглашение",
 
   // app header
-  app_title: "Сборщик Thingino Администрирование",
+  app_title: "Сборщик образов Thingino Администрирование",
   signout_btn: "Выйти",
   updated: "обновлено {t}",
 

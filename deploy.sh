@@ -10,7 +10,7 @@ DIR="$(pwd)"
 command -v podman >/dev/null 2>&1 || { echo "podman is not installed"; exit 1; }
 mkdir -p certs state
 
-IMAGE="${IMAGE:-ghcr.io/thingino/thingino-web-builder}"
+IMAGE="${IMAGE:-ghcr.io/thingino/thingino-image-builder}"
 TAG="${IMAGE_TAG:-latest}"
 echo "==> pulling ${IMAGE}:${TAG}"
 podman pull "${IMAGE}:${TAG}"

@@ -1,9 +1,9 @@
 // Spanish strings for the public builder page: same keys as the English baseline.
 I18N.add("es", {
   // index.html: estático
-  page_title: "thingino · Compilador de Firmware",
-  header_full: " Compilador de Firmware Thingino",
-  header_short: " Compilador Thingino",
+  page_title: "thingino · Constructor de Imágenes",
+  header_full: " Constructor de Imágenes Thingino",
+  header_short: " Constructor de Imágenes Thingino",
   commit_badge_title: "commit de thingino en compilación",
   connecting: "Conectando…",
   camera_label: "defconfig de cámara",
@@ -11,7 +11,7 @@ I18N.add("es", {
   build_btn: "Compilar",
   loading_cameras: "Cargando lista de cámaras…",
   footer_limits: "Las compilaciones se ejecutan en GitHub Actions (~20–40 min), así que ten paciencia. Límites de usuario: <strong>2 compilaciones/hora</strong> por usuario, <strong>6</strong> en total a la vez. Las imágenes terminadas se pueden descargar durante <strong>30 minutos</strong>, después se eliminan.",
-  footer_link: "compilador de firmware thingino",
+  footer_link: "constructor de imágenes thingino",
   admin_link: "admin",
   // app.js: dinámico
   min_approx: "~{n} min",

@@ -1,7 +1,7 @@
 // Japanese (ja) strings for the admin page: keys mirror i18n-adm-en.js.
 I18N.add("ja", {
   // document title
-  page_title: "thingino · ビルダー管理",
+  page_title: "thingino · イメージビルダー管理",
   // gate / login (static)
   gate_title: "管理者",
   signin_hint: "管理者のユーザー名、パスワード、6桁のコードでサインインしてください。",
@@ -32,7 +32,7 @@ I18N.add("ja", {
   invalid_invite: "無効な招待",
 
   // app header
-  app_title: "Thingino ビルダー管理",
+  app_title: "Thingino イメージビルダー管理",
   signout_btn: "サインアウト",
   updated: "更新 {t}",
 
