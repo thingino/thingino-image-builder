@@ -118,7 +118,11 @@ jobs:
         with:
           repository: ${{ env.THINGINO_REPO }}
           ref: ${{ steps.in.outputs.commit }}
-          submodules: "true"
+          # Don't pre-fetch submodules: checkout would clone buildroot SHALLOW, and
+          # `make update`'s subsequent by-SHA fetch of the pinned buildroot commit
+          # then fails ("upload-pack: not our ref"). Left off, `make update` clones
+          # buildroot fresh + full itself, exactly like a local build.
+          submodules: "false"
           fetch-depth: "1"
           path: thingino
 
