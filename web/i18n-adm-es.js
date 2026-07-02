@@ -59,7 +59,7 @@ I18N.add("es", {
   requesting_update: "solicitando actualización…",
   update_requested: "actualización solicitada",
   update_failed: "error de actualización",
-  confirm_update: "¿Actualizar el compilador{v} y reiniciar? Las compilaciones en curso siguen ejecutándose en GitHub.",
+  confirm_update: "¿Actualizar el constructor{v} y reiniciar? Las compilaciones en curso siguen ejecutándose en GitHub.",
   update_to_ver: " a {v}",
 
   // usuarios
