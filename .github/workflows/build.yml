@@ -186,6 +186,14 @@ jobs:
           if [ -d ~/dl/dl ]; then mv ~/dl/dl/* ~/dl/ && rm -rf ~/dl/dl; fi
           echo "dl-cache files: $(find ~/dl -type f | wc -l)"
 
+      - name: Patch buildroot (make update)
+        run: |
+          set -euo pipefail
+          cd thingino
+          # Applies thingino's patches to the buildroot tree. Must run before the
+          # build — some boards fail to build without it.
+          make update
+
       - name: Build firmware
         env:
           DEFCONFIG: ${{ steps.in.outputs.defconfig }}
