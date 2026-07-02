@@ -108,7 +108,7 @@ jobs:
             autoconf bc bison build-essential ca-certificates ccache cmake cpio curl dialog \
             file flex gawk gh git jq libcrypt-dev libncurses-dev libssl-dev libusb-1.0-0-dev lzop m4 \
             make mtools nano nodejs npm p7zip-full parted perl procps python3 python3-dev \
-            python3-setuptools ripgrep rsync shfmt swig tzdata u-boot-tools unzip vim-tiny wget
+            python3-setuptools ripgrep rsync shfmt swig tzdata u-boot-tools unzip vim-tiny wget whiptail
 
       - name: Set timezone
         run: ln -sf "/usr/share/zoneinfo/${TZ}" /etc/localtime && echo "${TZ}" > /etc/timezone
