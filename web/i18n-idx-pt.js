@@ -35,7 +35,7 @@ I18N.add("pt", {
   state_done: "Compilação pronta",
   download_btn: "Baixar .bin",
   build_another_btn: "Compilar outra",
-  download_window_note: "Disponível por ~30 minutos, depois removida.",
+  download_window_note: "Disponível por ~{mins} minutos, depois removida.",
   state_failed: "Falha na compilação",
   try_again_btn: "Tentar novamente",
   state_expired: "Janela de download expirada",

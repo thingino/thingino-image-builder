@@ -35,7 +35,7 @@ I18N.add("en", {
   state_done: "Build ready",
   download_btn: "Download .bin",
   build_another_btn: "Build another",
-  download_window_note: "Available for ~30 minutes, then removed.",
+  download_window_note: "Available for ~{mins} minutes, then removed.",
   state_failed: "Build failed",
   try_again_btn: "Try again",
   state_expired: "Download window expired",

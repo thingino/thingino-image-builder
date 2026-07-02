@@ -48,13 +48,13 @@
         <p>We do not collect names, emails, passwords, or other personal data.</p>
 
         <h2>Builds and downloads are public</h2>
-        <p>Your firmware is compiled on <strong>GitHub Actions</strong> and published as a <strong>public download</strong> (a GitHub release asset). While it exists (about <strong>30 minutes</strong>, then it's auto-deleted), anyone with the link can fetch it. The images hold no personal data, but the link isn't secret.</p>
+        <p>Your firmware is compiled on <strong>GitHub Actions</strong> and published as a <strong>public download</strong> (a GitHub release asset). While it exists (about <strong>~<span class="ret-mins">30</span> minutes</strong>, then it's auto-deleted), anyone with the link can fetch it. The images hold no personal data, but the link isn't secret.</p>
 
         <h2>Who processes your data</h2>
         <p>The site is served by <strong>GitHub Pages</strong>, the build API runs on <strong>Cloudflare Workers</strong>, and builds run on <strong>GitHub Actions</strong>. Your requests and IP pass through Cloudflare and GitHub, each with its own privacy policy.</p>
 
         <h2>Retention</h2>
-        <p>IP addresses and request logs are kept only briefly, for abuse prevention, and are purged periodically. Built images are removed after ~30 minutes.</p>
+        <p>IP addresses and request logs are kept only briefly, for abuse prevention, and are purged periodically. Built images are removed after ~<span class="ret-mins">30</span> minutes.</p>
 
         <h2>Stored in your browser</h2>
         <p>A few preferences live on your device: language, help-hints on/off, selected branch, and your anonymous build ID. Only the build ID is ever sent to the service.</p>
@@ -64,5 +64,7 @@
       </div>
     </div>
   </div>
+  <script src="config.js"></script>
+  <script src="privacy.js"></script>
 </body>
 </html>

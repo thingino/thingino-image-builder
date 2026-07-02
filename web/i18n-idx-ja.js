@@ -35,7 +35,7 @@ I18N.add("ja", {
   state_done: "ビルド完了",
   download_btn: ".bin をダウンロード",
   build_another_btn: "別のビルドを作成",
-  download_window_note: "約30分間 ダウンロードでき、その後削除されます。",
+  download_window_note: "約{mins}分間 ダウンロードでき、その後削除されます。",
   state_failed: "ビルド失敗",
   try_again_btn: "再試行",
   state_expired: "ダウンロード期限切れ",

@@ -35,7 +35,7 @@ I18N.add("zh-CN", {
   state_done: "构建完成",
   download_btn: "下载 .bin",
   build_another_btn: "构建另一个",
-  download_window_note: "可下载约 30 分钟，之后将被删除。",
+  download_window_note: "可下载约 {mins} 分钟，之后将被删除。",
   state_failed: "构建失败",
   try_again_btn: "重试",
   state_expired: "下载窗口已过期",

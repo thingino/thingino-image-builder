@@ -35,7 +35,7 @@ I18N.add("fr", {
   state_done: "Génération prête",
   download_btn: "Télécharger .bin",
   build_another_btn: "Générer un autre",
-  download_window_note: "Disponible ~30 minutes, puis supprimée.",
+  download_window_note: "Disponible ~{mins} minutes, puis supprimée.",
   state_failed: "Échec de la génération",
   try_again_btn: "Réessayer",
   state_expired: "Délai de téléchargement expiré",

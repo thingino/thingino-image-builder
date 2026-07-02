@@ -35,7 +35,7 @@ I18N.add("ru", {
   state_done: "Сборка готова",
   download_btn: "Скачать .bin",
   build_another_btn: "Собрать ещё",
-  download_window_note: "Доступно ~30 минут, затем удаляется.",
+  download_window_note: "Доступно ~{mins} минут, затем удаляется.",
   state_failed: "Сборка не удалась",
   try_again_btn: "Повторить",
   state_expired: "Срок скачивания истёк",
