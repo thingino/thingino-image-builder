@@ -136,12 +136,14 @@ jobs:
           # The broker pins an exact commit, so checkout leaves HEAD detached. But
           # `make update` runs `git pull --rebase --autostash`, which refuses on a
           # detached HEAD ("You are not currently on a branch"). Put HEAD on a local
-          # branch that tracks itself, so the pull is a clean no-op: we build the
-          # pinned commit exactly (no drift to branch-latest), and make update's
-          # submodule-update + patch steps still run.
-          git checkout -B ci-pinned
-          git config branch.ci-pinned.remote .
-          git config branch.ci-pinned.merge refs/heads/ci-pinned
+          # branch (named after the build ref) that tracks itself, so the pull is a
+          # clean no-op: we build the pinned commit exactly (no drift to branch-
+          # latest), thingino's version string + output dir show the real branch,
+          # and make update's submodule-update + patch steps still run.
+          REF="${THINGINO_REF:-master}"
+          git checkout -B "$REF"
+          git config "branch.${REF}.remote" .
+          git config "branch.${REF}.merge" "refs/heads/${REF}"
 
       - name: Verify defconfig + resolve group
         env:
