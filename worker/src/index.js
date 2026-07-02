@@ -198,7 +198,7 @@ async function handleStats(request, env, ref) {
   const uid = resolveUid(request);
   const { commit } = await resolveThingino(env, ref);
   const cfg = await limits(env);
-  const avg = await env.DB.prepare("SELECT avg(finished_ts - dispatched_ts) a FROM builds WHERE state='done' AND finished_ts IS NOT NULL AND dispatched_ts IS NOT NULL").first();
+  const avg = await env.DB.prepare("SELECT avg(finished_ts - dispatched_ts) a FROM builds WHERE state IN ('done','expired') AND finished_ts IS NOT NULL AND dispatched_ts IS NOT NULL").first();
   return json({
     running: await countQ(env, "SELECT count(*) c FROM builds WHERE state='running'"),
     queued: await countQ(env, "SELECT count(*) c FROM builds WHERE state='queued'"),
@@ -802,7 +802,7 @@ async function handleAdminStats(request, env) {
   const counts = {};
   for (const s of ["queued", "running", "done", "failed", "cancelled", "expired"])
     counts[s] = await countQ(env, "SELECT count(*) c FROM builds WHERE state=?", s);
-  const avg = await env.DB.prepare("SELECT avg(finished_ts - dispatched_ts) a FROM builds WHERE state='done' AND finished_ts IS NOT NULL AND dispatched_ts IS NOT NULL").first();
+  const avg = await env.DB.prepare("SELECT avg(finished_ts - dispatched_ts) a FROM builds WHERE state IN ('done','expired') AND finished_ts IS NOT NULL AND dispatched_ts IS NOT NULL").first();
   const builds = ((await env.DB.prepare("SELECT id,defconfig,state,created_ts,dispatched_ts,finished_ts,run_id,cancel_requested,uid,ip_bucket,ip_full FROM builds ORDER BY created_ts DESC LIMIT 25").all()).results || []).map((b) => ({
     build_id: b.id, defconfig: b.defconfig,
     state: b.state === "running" && b.cancel_requested ? "cancelling" : b.state,
