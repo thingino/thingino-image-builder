@@ -198,10 +198,12 @@ async function handleStats(request, env, ref) {
   const uid = resolveUid(request);
   const { commit } = await resolveThingino(env, ref);
   const cfg = await limits(env);
+  const avg = await env.DB.prepare("SELECT avg(finished_ts - dispatched_ts) a FROM builds WHERE state='done' AND finished_ts IS NOT NULL AND dispatched_ts IS NOT NULL").first();
   return json({
     running: await countQ(env, "SELECT count(*) c FROM builds WHERE state='running'"),
     queued: await countQ(env, "SELECT count(*) c FROM builds WHERE state='queued'"),
     max_concurrent: cfg.maxConcurrent,
+    avg_build_secs: avg && avg.a ? Math.round(avg.a) : null,
     builds_enabled: (await getSetting(env, "builds_enabled")) !== "0",
     commit,
     version: env.VERSION || "v0.1.0",
