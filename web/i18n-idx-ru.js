@@ -10,7 +10,7 @@ I18N.add("ru", {
   board_placeholder: "начните вводить, напр. atom_cam2…",
   build_btn: "Собрать",
   loading_cameras: "Загрузка списка камер…",
-  footer_limits: "Сборки выполняются в GitHub Actions (~20–40 мин), поэтому наберитесь терпения. Ограничения: <strong>2 сборки/час</strong> на пользователя, <strong>6</strong> одновременно. Готовые образы доступны для скачивания в течение <strong>30 минут</strong>, затем удаляются.",
+  footer_limits: "Сборки выполняются в GitHub Actions (~20–40 мин), поэтому наберитесь терпения. Ограничения: <strong>{user} сборки/час</strong> на пользователя, <strong>{conc}</strong> одновременно. Готовые образы доступны для скачивания в течение <strong>{mins} минут</strong>, затем удаляются.",
   footer_link: "сборщик образов thingino",
   admin_link: "админ",
   // app.js: dynamic

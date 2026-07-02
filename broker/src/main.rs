@@ -803,7 +803,7 @@ async fn get_stats(State(st): State<AppState>, Query(q): Query<RefQuery>, header
     let now_ts = now();
     let commit = current_commit(&st, &q.req_ref).await;
     let conn = st.db.lock();
-    let max_concurrent = effective_limits(&conn, &st.cfg).max_concurrent;
+    let lim = effective_limits(&conn, &st.cfg);
     let running: i64 = conn.query_row("SELECT count(*) FROM builds WHERE state='running'", [], |r| r.get(0)).unwrap_or(0);
     let queued: i64 = conn.query_row("SELECT count(*) FROM builds WHERE state='queued'", [], |r| r.get(0)).unwrap_or(0);
     let avg: Option<f64> = conn
@@ -822,7 +822,9 @@ async fn get_stats(State(st): State<AppState>, Query(q): Query<RefQuery>, header
         json!({
             "running": running,
             "queued": queued,
-            "max_concurrent": max_concurrent,
+            "max_concurrent": lim.max_concurrent,
+            "user_hourly": lim.user_hourly,
+            "retention_secs": lim.retention,
             "avg_build_secs": avg.map(|v| v.round() as i64),
             "builds_enabled": enabled,
             "commit": commit,

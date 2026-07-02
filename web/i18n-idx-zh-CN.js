@@ -10,7 +10,7 @@ I18N.add("zh-CN", {
   board_placeholder: "开始输入，例如 atom_cam2…",
   build_btn: "构建",
   loading_cameras: "正在加载摄像头列表…",
-  footer_limits: "构建在 GitHub Actions 上运行（约 20–40 分钟），请耐心等待。用户限制：每位用户 <strong>每小时 2 次构建</strong>，同时最多 <strong>6</strong> 个。完成的镜像可下载 <strong>30 分钟</strong>，之后将被删除。",
+  footer_limits: "构建在 GitHub Actions 上运行（约 20–40 分钟），请耐心等待。用户限制：每位用户 <strong>每小时 {user} 次构建</strong>，同时最多 <strong>{conc}</strong> 个。完成的镜像可下载 <strong>{mins} 分钟</strong>，之后将被删除。",
   footer_link: "thingino 镜像构建器",
   admin_link: "管理后台",
   // app.js: dynamic

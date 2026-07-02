@@ -10,7 +10,7 @@ I18N.add("fr", {
   board_placeholder: "commencez à taper, p. ex. atom_cam2…",
   build_btn: "Générer",
   loading_cameras: "Chargement de la liste des caméras…",
-  footer_limits: "Les générations s'exécutent sur GitHub Actions (~20–40 min), merci de patienter. Limites par utilisateur : <strong>2 générations/heure</strong>, <strong>6</strong> au total simultanément. Les images terminées sont téléchargeables pendant <strong>30 minutes</strong>, puis elles sont supprimées.",
+  footer_limits: "Les générations s'exécutent sur GitHub Actions (~20–40 min), merci de patienter. Limites par utilisateur : <strong>{user} générations/heure</strong>, <strong>{conc}</strong> au total simultanément. Les images terminées sont téléchargeables pendant <strong>{mins} minutes</strong>, puis elles sont supprimées.",
   footer_link: "générateur d'images thingino",
   admin_link: "admin",
   // app.js: dynamic

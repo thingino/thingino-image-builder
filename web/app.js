@@ -9,7 +9,7 @@
   const REFS=['master','ciao','stable'], REF_KEY='thingino_ref';
   let curRef=REFS.includes(localStorage.getItem(REF_KEY))?localStorage.getItem(REF_KEY):'master';
 
-  let allowed=new Set(), maxConc=6, avgSecs=null, curCommit=null, you=null, youAt=0;
+  let allowed=new Set(), maxConc=6, avgSecs=null, userHourly=2, retentionMins=30, curCommit=null, you=null, youAt=0;
   const ACTIVE=new Set(['queued','running','cancelling']);
 
   const fmt=s=>{ s=Math.max(0,Math.floor(s)); return `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`; };
@@ -48,6 +48,14 @@
     const b=$('banner');
     if(d.builds_enabled===false){ b.innerHTML='<i class="bi bi-exclamation-triangle me-1"></i>'+I18N.t('builds_disabled'); b.classList.remove('d-none'); }
     else b.classList.add('d-none');
+    renderFooterLimits();
+  }
+
+  // Footer help text with the live limits (per-user hourly, concurrency, retention);
+  // reflects admin-portal overrides. Re-run on stats refresh, init, and language switch.
+  function renderFooterLimits(){
+    const el=$('footer-limits');
+    if(el) el.innerHTML=I18N.t('footer_limits',{user:userHourly,conc:maxConc,mins:retentionMins});
   }
 
   function renderYou(){
@@ -80,7 +88,7 @@
 
   async function refresh(){
     const {ok,data}=await api('/api/stats?ref='+encodeURIComponent(curRef));
-    if(ok&&data){ maxConc=data.max_concurrent||6; avgSecs=data.avg_build_secs; renderGlobal(data);
+    if(ok&&data){ maxConc=data.max_concurrent||6; avgSecs=data.avg_build_secs; userHourly=data.user_hourly||userHourly; if(data.retention_secs) retentionMins=Math.max(1,Math.round(data.retention_secs/60)); renderGlobal(data);
       if(!myId && data.you){ setMy(data.you.build_id); } }
     if(myId){
       const s=await api('/api/status/'+myId);
@@ -165,8 +173,8 @@
   document.querySelectorAll('.branch-radio').forEach(r=>r.addEventListener('change',()=>{ if(r.checked&&REFS.includes(r.value)){ curRef=r.value; localStorage.setItem(REF_KEY,curRef); loadBoards(); refresh(); } }));
   $('btn-help').addEventListener('click',()=>setHelp(!helpMode));
   $('setting-help').addEventListener('change',e=>setHelp(e.target.checked));
-  I18N.apply(); I18N.selector('lang-slot'); applyHelpMode();
-  window.addEventListener('i18nchange',()=>{ I18N.apply(); validate(); renderYou(); refresh(); applyHelpMode(); });
+  I18N.apply(); renderFooterLimits(); I18N.selector('lang-slot'); applyHelpMode();
+  window.addEventListener('i18nchange',()=>{ I18N.apply(); renderFooterLimits(); validate(); renderYou(); refresh(); applyHelpMode(); });
   loadBoards(); refresh();
   setInterval(refresh, 5000);
   setInterval(()=>{ if(you&&you.state==='running') renderYou(); }, 1000);

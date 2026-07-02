@@ -10,7 +10,7 @@ I18N.add("es", {
   board_placeholder: "empieza a escribir, p. ej. atom_cam2…",
   build_btn: "Compilar",
   loading_cameras: "Cargando lista de cámaras…",
-  footer_limits: "Las compilaciones se ejecutan en GitHub Actions (~20–40 min), así que ten paciencia. Límites de usuario: <strong>2 compilaciones/hora</strong> por usuario, <strong>6</strong> en total a la vez. Las imágenes terminadas se pueden descargar durante <strong>30 minutos</strong>, después se eliminan.",
+  footer_limits: "Las compilaciones se ejecutan en GitHub Actions (~20–40 min), así que ten paciencia. Límites de usuario: <strong>{user} compilaciones/hora</strong> por usuario, <strong>{conc}</strong> en total a la vez. Las imágenes terminadas se pueden descargar durante <strong>{mins} minutos</strong>, después se eliminan.",
   footer_link: "constructor de imágenes thingino",
   admin_link: "admin",
   // app.js: dinámico

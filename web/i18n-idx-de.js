@@ -10,7 +10,7 @@ I18N.add("de", {
   board_placeholder: "tippen, z. B. atom_cam2…",
   build_btn: "Erstellen",
   loading_cameras: "Kameraliste wird geladen…",
-  footer_limits: "Builds laufen auf GitHub Actions (~20–40 Min.), bitte etwas Geduld. Limits: <strong>2 Builds/Stunde</strong> pro Benutzer, <strong>6</strong> gleichzeitig insgesamt. Fertige Images stehen <strong>30 Minuten</strong> zum Download bereit, danach werden sie entfernt.",
+  footer_limits: "Builds laufen auf GitHub Actions (~20–40 Min.), bitte etwas Geduld. Limits: <strong>{user} Builds/Stunde</strong> pro Benutzer, <strong>{conc}</strong> gleichzeitig insgesamt. Fertige Images stehen <strong>{mins} Minuten</strong> zum Download bereit, danach werden sie entfernt.",
   footer_link: "thingino Image-Builder",
   admin_link: "Admin",
   // app.js: dynamic

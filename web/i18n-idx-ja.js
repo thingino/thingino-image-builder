@@ -10,7 +10,7 @@ I18N.add("ja", {
   board_placeholder: "入力してください（例: atom_cam2…）",
   build_btn: "ビルド",
   loading_cameras: "カメラ一覧を読み込み中…",
-  footer_limits: "ビルドは GitHub Actions 上で実行されます（約20–40分）。しばらくお待ちください。利用制限: ユーザーごとに <strong>1時間あたり2ビルド</strong>、同時に合計 <strong>6</strong> 件まで。完成したイメージは <strong>30分間</strong> ダウンロードでき、その後削除されます。",
+  footer_limits: "ビルドは GitHub Actions 上で実行されます（約20–40分）。しばらくお待ちください。利用制限: ユーザーごとに <strong>1時間あたり{user}ビルド</strong>、同時に合計 <strong>{conc}</strong> 件まで。完成したイメージは <strong>{mins}分間</strong> ダウンロードでき、その後削除されます。",
   footer_link: "thingino イメージビルダー",
   admin_link: "管理",
   // app.js: dynamic

@@ -203,6 +203,8 @@ async function handleStats(request, env, ref) {
     running: await countQ(env, "SELECT count(*) c FROM builds WHERE state='running'"),
     queued: await countQ(env, "SELECT count(*) c FROM builds WHERE state='queued'"),
     max_concurrent: cfg.maxConcurrent,
+    user_hourly: cfg.userHourly,
+    retention_secs: cfg.retention,
     avg_build_secs: avg && avg.a ? Math.round(avg.a) : null,
     builds_enabled: (await getSetting(env, "builds_enabled")) !== "0",
     commit,
