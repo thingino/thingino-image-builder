@@ -11,10 +11,13 @@
 //   I18N.selector('id')               → builds the language <select> into that element
 //   window 'i18nchange' event         → fires on language switch; re-render dynamic UI in the handler
 (function () {
-  var SUPPORTED = ["en", "es", "fr", "de", "zh-CN", "pt", "ru", "ja"];
+  var SUPPORTED = ["en", "es", "fr", "de", "it", "nl", "pl", "pt", "tr", "uk", "ru", "ar", "zh-CN", "ja", "ko"];
+  var RTL = ["ar", "he", "fa", "ur"];   // right-to-left languages → dir="rtl" in apply()
   var NAMES = {
     "en": "English", "es": "Español", "fr": "Français", "de": "Deutsch",
-    "zh-CN": "中文", "pt": "Português", "ru": "Русский", "ja": "日本語",
+    "it": "Italiano", "nl": "Nederlands", "pl": "Polski", "pt": "Português",
+    "tr": "Türkçe", "uk": "Українська", "ru": "Русский", "ar": "العربية",
+    "zh-CN": "中文", "ja": "日本語", "ko": "한국어",
   };
   var DICT = {};
   function add(lang, obj) { DICT[lang] = Object.assign(DICT[lang] || {}, obj); }
@@ -50,6 +53,7 @@
     root.querySelectorAll("[data-i18n-title]").forEach(function (el) { el.setAttribute("title", t(el.getAttribute("data-i18n-title"))); });
     root.querySelectorAll("[data-i18n-html]").forEach(function (el) { el.innerHTML = t(el.getAttribute("data-i18n-html")); });
     document.documentElement.lang = lang;
+    document.documentElement.dir = RTL.indexOf(lang) >= 0 ? "rtl" : "ltr";
   }
 
   function set(l) {
