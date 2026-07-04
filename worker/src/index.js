@@ -489,6 +489,9 @@ async function schedulerWork(env, ts) {
       if (m.status === "completed") {
         const st = m.conclusion === "success" ? "done" : m.conclusion === "cancelled" ? "cancelled" : "failed";
         await env.DB.prepare("UPDATE builds SET state=?, finished_ts=? WHERE id=?").bind(st, ts, b.id).run();
+        // All-time count of successful builds. Lives in settings, so it survives the
+        // reaper + clear-logs + clear-builds (which only touch builds/events).
+        if (st === "done") await env.DB.prepare("INSERT INTO settings(key,value) VALUES('total_done','1') ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1").run();
         await logEvent(env, st, b.id, null, null, `run ${m.run_id} ${m.conclusion || "?"}`);
       } else if (ts - (b.dispatched_ts || ts) > cfg.buildTimeout) {
         // Run is listed but still in-progress past the timeout — stop it and fail the build.
@@ -819,6 +822,7 @@ async function handleAdminStats(request, env) {
     builds_enabled: (await getSetting(env, "builds_enabled")) !== "0",
     counts,
     last24h: await countQ(env, "SELECT count(*) c FROM builds WHERE created_ts > ?", nowSec() - DAY),
+    total_done: parseInt((await getSetting(env, "total_done")) || "0", 10),
     avg_build_secs: avg && avg.a ? Math.round(avg.a) : null,
     max_concurrent: cfg.maxConcurrent, retention_secs: cfg.retention,
     limits: { userHourly: cfg.userHourly, ipHourly: cfg.ipHourly, globalHourly: cfg.globalHourly, maxConcurrent: cfg.maxConcurrent, maxQueue: cfg.maxQueue, retention: cfg.retention },

@@ -106,6 +106,7 @@ I18N.add("es", {
   // tarjetas
   tile_24h: "24h",
   tile_avg_build: "compilación media",
+  tile_total_done: "compilaciones tot.",
 
   // estados de compilación: píldoras + tarjetas
   state_running: "en ejecución",

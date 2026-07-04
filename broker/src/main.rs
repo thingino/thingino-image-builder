@@ -1218,6 +1218,7 @@ async fn admin_stats(State(st): State<AppState>, headers: HeaderMap) -> Response
         counts.insert(s.to_string(), json!(n));
     }
     let last24: i64 = conn.query_row("SELECT count(*) FROM builds WHERE created_ts > ?1", [now_ts - DAY_SECS], |r| r.get(0)).unwrap_or(0);
+    let total_done: i64 = get_setting(&conn, "total_done").and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
     let avg: Option<f64> = conn
         .query_row("SELECT avg(finished_ts - dispatched_ts) FROM builds WHERE state='done' AND finished_ts IS NOT NULL AND dispatched_ts IS NOT NULL", [], |r| r.get(0))
         .optional().ok().flatten();
@@ -1240,6 +1241,7 @@ async fn admin_stats(State(st): State<AppState>, headers: HeaderMap) -> Response
         "builds_enabled": enabled,
         "counts": counts,
         "last24h": last24,
+        "total_done": total_done,
         "avg_build_secs": avg.map(|v| v.round() as i64),
         "max_concurrent": lim.max_concurrent,
         "retention_secs": lim.retention,
@@ -2114,6 +2116,11 @@ async fn scheduler_step(st: &AppState) -> anyhow::Result<()> {
                     };
                     let conn = st.db.lock();
                     conn.execute("UPDATE builds SET state=?2, finished_ts=?3 WHERE id=?1", rusqlite::params![id, new_state, now_ts]).ok();
+                    // All-time count of successful builds (in settings; survives the reaper +
+                    // clear-logs + clear-builds, which only touch builds/events).
+                    if new_state == "done" {
+                        conn.execute("INSERT INTO settings(key,value) VALUES('total_done','1') ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1", []).ok();
+                    }
                     log_event(&conn, new_state, Some(id), None, None, &format!("run {} {}", r.run_id, r.conclusion.as_deref().unwrap_or("?")), None);
                 } else if now_ts - dispatched_ts > lim.build_timeout {
                     // Run is still listed but hasn't completed within the timeout: cancel it and

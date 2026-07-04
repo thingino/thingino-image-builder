@@ -106,6 +106,7 @@ I18N.add("fr", {
   // tiles
   tile_24h: "24 h",
   tile_avg_build: "génération moy.",
+  tile_total_done: "générations tot.",
 
   // build states: pills + tiles
   state_running: "en cours",

@@ -106,6 +106,7 @@ I18N.add("tr", {
   // kutucuklar
   tile_24h: "24sa",
   tile_avg_build: "ort. derleme",
+  tile_total_done: "toplam derleme",
 
   // derleme durumları: etiketler + kutucuklar
   state_running: "çalışıyor",

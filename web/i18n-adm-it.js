@@ -106,6 +106,7 @@ I18N.add("it", {
   // riquadri
   tile_24h: "24h",
   tile_avg_build: "compilazione media",
+  tile_total_done: "compilazioni tot.",
 
   // stati di compilazione: etichette + riquadri
   state_running: "in esecuzione",

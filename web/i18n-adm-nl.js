@@ -106,6 +106,7 @@ I18N.add("nl", {
   // tiles
   tile_24h: "24 u",
   tile_avg_build: "gem. build",
+  tile_total_done: "totaal gebouwd",
 
   // build states: pills + tiles
   state_running: "actief",

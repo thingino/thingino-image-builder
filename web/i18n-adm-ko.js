@@ -106,6 +106,7 @@ I18N.add("ko", {
   // tiles
   tile_24h: "24시간",
   tile_avg_build: "평균 빌드 시간",
+  tile_total_done: "총 빌드 수",
 
   // build states: pills + tiles
   state_running: "실행 중",

@@ -106,6 +106,7 @@ I18N.add("zh-CN", {
   // tiles
   tile_24h: "24 小时",
   tile_avg_build: "平均构建",
+  tile_total_done: "累计构建",
 
   // build states: pills + tiles
   state_running: "运行中",

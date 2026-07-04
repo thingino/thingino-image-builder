@@ -106,6 +106,7 @@ I18N.add("ja", {
   // tiles
   tile_24h: "24時間",
   tile_avg_build: "平均ビルド時間",
+  tile_total_done: "累計ビルド",
 
   // build states: pills + tiles
   state_running: "実行中",

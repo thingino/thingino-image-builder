@@ -106,6 +106,7 @@ I18N.add("ru", {
   // tiles
   tile_24h: "24ч",
   tile_avg_build: "ср. сборка",
+  tile_total_done: "всего собрано",
 
   // build states: pills + tiles
   state_running: "выполняется",

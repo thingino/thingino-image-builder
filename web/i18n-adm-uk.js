@@ -106,6 +106,7 @@ I18N.add("uk", {
   // tiles
   tile_24h: "24 год",
   tile_avg_build: "сер. збірка",
+  tile_total_done: "усього зібрано",
 
   // build states: pills + tiles
   state_running: "виконується",
