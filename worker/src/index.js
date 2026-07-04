@@ -77,6 +77,19 @@ function resolveUid(request) {
   const h = request.headers.get("x-builder-uid");
   return validUid(h) ? h : uuid();
 }
+// Per-IP fixed-window request guard via the Durable Object limiter. Returns true
+// (allow) when RL_DO is unbound or errors — fail-open, so a limiter hiccup never
+// blocks legit users; the D1 hourly caps stay the real build throttle.
+async function rlGuard(env, ip, max, period) {
+  if (!env.RL_DO) return true;
+  try {
+    const stub = env.RL_DO.get(env.RL_DO.idFromName(ip));
+    const { success } = await (await stub.fetch("https://rl/", {
+      method: "POST", body: JSON.stringify({ max, period }),
+    })).json();
+    return success;
+  } catch { return true; }
+}
 
 // ---- D1 helpers -----------------------------------------------------------
 const countQ = async (env, sql, ...args) =>
@@ -156,7 +169,7 @@ async function resolveThingino(env, ref) {
 
   const repo = env.THINGINO_REPO || "themactep/thingino-firmware";
   try {
-    const cr = await fetch(`https://api.github.com/repos/${repo}/commits/${ref}`, { headers: ghHeaders(env, false) });
+    const cr = await ghFetch(env, `https://api.github.com/repos/${repo}/commits/${ref}`);
     if (cr.ok) {
       const newCommit = (await cr.json()).sha;
       if (newCommit && newCommit !== commit) {
@@ -174,9 +187,7 @@ async function resolveThingino(env, ref) {
   return { commit: commit || null, list: listJson ? JSON.parse(listJson) : [] };
 }
 async function fetchDir(env, repo, commit, subdir) {
-  const r = await fetch(`https://api.github.com/repos/${repo}/contents/configs/${subdir}?ref=${commit}`, {
-    headers: ghHeaders(env, false),
-  });
+  const r = await ghFetch(env, `https://api.github.com/repos/${repo}/contents/configs/${subdir}?ref=${commit}`);
   if (!r.ok) return [];
   const arr = await r.json();
   return Array.isArray(arr)
@@ -215,23 +226,13 @@ async function handleStats(request, env, ref) {
 async function handleBuild(request, env) {
   const rawIp = request.headers.get("CF-Connecting-IP") || "";
   const ip = ipBucket(rawIp);
-  // Per-IP request cap in FRONT of all the D1 work, so a /api/build flood can't burn
-  // the D1 budget (audit F12). A Durable Object (one instance per IP) gives a single
-  // strongly-consistent counter that actually enforces on the free plan — unlike the
-  // rate-limit binding, which is a no-op there. Self-disables if RL_DO is unbound;
-  // fails OPEN if the limiter errors (never block legit users on a limiter hiccup).
-  if (env.RL_DO) {
-    try {
-      const stub = env.RL_DO.get(env.RL_DO.idFromName(ip));
-      const { success } = await (await stub.fetch("https://rl/", {
-        method: "POST", body: JSON.stringify({ max: 20, period: 60 }),
-      })).json();
-      if (!success) return json({ error: "too many requests from your network — slow down" }, 429, env);
-    } catch (_) { /* limiter unavailable — fail open */ }
-  }
+  // Stricter per-IP build cap on top of the whole-API flood guard (see fetch()):
+  // building is the expensive path (it dispatches a CI job).
+  if (!(await rlGuard(env, ip, 20, 60)))
+    return json({ error: "too many requests from your network — slow down" }, 429, env);
   let body;
   try { body = await request.json(); } catch { return json({ error: "bad request" }, 400, env); }
-  const defconfig = (body.defconfig || "").trim();
+  const defconfig = typeof body.defconfig === "string" ? body.defconfig.trim() : "";
   const { commit, list } = await resolveThingino(env, body.ref);
   if (!list.includes(defconfig)) return json({ error: "unknown defconfig" }, 400, env);
 
@@ -285,15 +286,13 @@ async function handleBuild(request, env) {
   ).run();
   if ((ins.meta?.changes ?? 0) === 0) {
     // Capped — re-run the cheap individual counts to pick which 429 message applies.
-    if ((await countQ(env, `SELECT count(*) c FROM builds WHERE created_ts > ? AND ${notCancelledUndispatched}`, cutoff)) >= cfg.globalHourly) {
-      await logEvent(env, "rate_limited", null, uid, ip, "global hourly limit", rawIp);
+    // No durable event per rejection: that INSERT is a one-way amplified write a
+    // flood can use to exhaust the D1 write budget (audit H2). The flood guard +
+    // the 429 are the signal; the re-check reads below only pick the message.
+    if ((await countQ(env, `SELECT count(*) c FROM builds WHERE created_ts > ? AND ${notCancelledUndispatched}`, cutoff)) >= cfg.globalHourly)
       return json({ error: `the builder is at its hourly limit (${cfg.globalHourly}/hr) — try again later` }, 429, env);
-    }
-    if ((await countQ(env, `SELECT count(*) c FROM builds WHERE uid=? AND created_ts > ? AND ${notCancelledUndispatched}`, uid, cutoff)) >= cfg.userHourly) {
-      await logEvent(env, "rate_limited", null, uid, ip, "per-user hourly limit", rawIp);
+    if ((await countQ(env, `SELECT count(*) c FROM builds WHERE uid=? AND created_ts > ? AND ${notCancelledUndispatched}`, uid, cutoff)) >= cfg.userHourly)
       return json({ error: `you've reached ${cfg.userHourly} builds this hour — try again later` }, 429, env);
-    }
-    await logEvent(env, "rate_limited", null, uid, ip, "per-ip hourly limit", rawIp);
     return json({ error: "too many builds from your network this hour — try again later" }, 429, env);
   }
   await logEvent(env, "queued", id, uid, ip, defconfig, rawIp);
@@ -304,7 +303,7 @@ async function handleBuild(request, env) {
   if ((await countQ(env, "SELECT count(*) c FROM builds WHERE state='running'")) < cfg.maxConcurrent) {
     // Claim-then-act: atomically flip queued→running so the cron can't grab the same
     // row mid-dispatch. Only dispatch if we won the claim.
-    const claim = await env.DB.prepare("UPDATE builds SET state='running', dispatched_ts=? WHERE id=? AND state='queued'").bind(nowSec(), id).run();
+    const claim = await env.DB.prepare("UPDATE builds SET state='running', dispatched_ts=? WHERE id=? AND state='queued' AND (SELECT count(*) FROM builds WHERE state='running') < ?").bind(nowSec(), id, cfg.maxConcurrent).run();
     if ((claim.meta?.changes ?? 0) === 1) {
       try {
         await dispatchBuild(env, id, defconfig, commit);
@@ -380,7 +379,9 @@ async function handleAdminCancel(id, request, env) {
 }
 // Admin: remove a finished build's artifact + Actions run early (the reaper's job, on demand).
 async function handleAdminExpire(id, request, env) {
-  if (!(await sessionAdmin(request, env))) return json({ error: "admin auth required" }, 401, env);
+  const who = await sessionAdmin(request, env);
+  if (!who) return json({ error: "admin auth required" }, 401, env);
+  if (!(await adminCan(env, who, "clear_builds"))) return json({ error: "not permitted" }, 403, env);
   if (!validBuildId(id)) return json({ error: "bad build_id" }, 400, env);
   const b = await env.DB.prepare("SELECT uid,state,run_id FROM builds WHERE id=?").bind(id).first();
   if (!b) return json({ error: "unknown build" }, 404, env);
@@ -475,6 +476,13 @@ async function schedulerWork(env, ts) {
         await logEvent(env, "cancelled", b.id, null, null, "run stopped + deleted");
       } else if (m) {
         await cancelRun(env, m.run_id);
+        // Backstop: if the run won't stop within the build timeout, force-finish it so
+        // it can't pin a concurrency slot indefinitely.
+        if (ts - (b.dispatched_ts || ts) > cfg.buildTimeout) {
+          await deleteRun(env, m.run_id);
+          await env.DB.prepare("UPDATE builds SET state='cancelled', finished_ts=?, run_id=NULL WHERE id=?").bind(ts, b.id).run();
+          await logEvent(env, "cancelled", b.id, null, null, "force-cancelled at timeout");
+        }
       } else if (b.dispatched_ts && ts - b.dispatched_ts > 180) {
         // Give up only after a grace window — otherwise we'd orphan a run that
         // simply hasn't appeared in the runs list yet.
@@ -488,11 +496,15 @@ async function schedulerWork(env, ts) {
       if (!b.run_id) await env.DB.prepare("UPDATE builds SET run_id=? WHERE id=?").bind(m.run_id, b.id).run();
       if (m.status === "completed") {
         const st = m.conclusion === "success" ? "done" : m.conclusion === "cancelled" ? "cancelled" : "failed";
-        await env.DB.prepare("UPDATE builds SET state=?, finished_ts=? WHERE id=?").bind(st, ts, b.id).run();
-        // All-time count of successful builds. Lives in settings, so it survives the
-        // reaper + clear-logs + clear-builds (which only touch builds/events).
-        if (st === "done") await env.DB.prepare("INSERT INTO settings(key,value) VALUES('total_done','1') ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1").run();
-        await logEvent(env, st, b.id, null, null, `run ${m.run_id} ${m.conclusion || "?"}`);
+        // Guard on state='running' so two overlapping cron ticks can't both apply the
+        // transition (which would double-count total_done + duplicate GitHub cleanup).
+        const fin = await env.DB.prepare("UPDATE builds SET state=?, finished_ts=? WHERE id=? AND state='running'").bind(st, ts, b.id).run();
+        if ((fin.meta?.changes ?? 0) === 1) {
+          // All-time count of successful builds. Lives in settings, so it survives the
+          // reaper + clear-logs + clear-builds (which only touch builds/events).
+          if (st === "done") await env.DB.prepare("INSERT INTO settings(key,value) VALUES('total_done','1') ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1").run();
+          await logEvent(env, st, b.id, null, null, `run ${m.run_id} ${m.conclusion || "?"}`);
+        }
       } else if (ts - (b.dispatched_ts || ts) > cfg.buildTimeout) {
         // Run is listed but still in-progress past the timeout — stop it and fail the build.
         await cancelRun(env, m.run_id);
@@ -508,7 +520,7 @@ async function schedulerWork(env, ts) {
   for (const q of queued) {
     // Claim-then-act: atomically flip queued→running so an inline dispatch (or another
     // overlapping tick) can't grab the same row. Skip if we didn't win the claim.
-    const claim = await env.DB.prepare("UPDATE builds SET state='running', dispatched_ts=? WHERE id=? AND state='queued'").bind(nowSec(), q.id).run();
+    const claim = await env.DB.prepare("UPDATE builds SET state='running', dispatched_ts=? WHERE id=? AND state='queued' AND (SELECT count(*) FROM builds WHERE state='running') < ?").bind(nowSec(), q.id, cfg.maxConcurrent).run();
     if ((claim.meta?.changes ?? 0) !== 1) continue;
     try {
       await dispatchBuild(env, q.id, q.defconfig, q.commit_sha);
@@ -538,7 +550,7 @@ async function schedulerWork(env, ts) {
   }
 
   await env.DB.prepare("DELETE FROM builds WHERE state='expired' AND finished_ts < ?").bind(ts - 7 * DAY).run();
-  await env.DB.prepare("DELETE FROM events WHERE ts < ?").bind(ts - 30 * DAY).run();
+  await env.DB.prepare("DELETE FROM events WHERE ts < ?").bind(ts - 7 * DAY).run();
 }
 
 // ---- admin (TOTP 2FA + sessions in D1) ------------------------------------
@@ -638,7 +650,14 @@ async function sessionAdmin(request, env) {
   const r = await env.DB.prepare("SELECT admin,expires FROM sessions WHERE token=?").bind(tok).first();
   // Fail closed: a null/empty stored admin must NOT default to "master" (master login
   // sets identity="master" explicitly, so the master path is unaffected).
-  return r && r.expires > t && r.admin ? r.admin : null;
+  if (!(r && r.expires > t && r.admin)) return null;
+  // Revocation is authoritative: a named admin's session is valid only while their
+  // account still exists and isn't disabled (master is env-based, always valid).
+  if (r.admin !== "master") {
+    const a = await env.DB.prepare("SELECT disabled FROM admins WHERE username=?").bind(r.admin).first();
+    if (!a || a.disabled) return null;
+  }
+  return r.admin;
 }
 // Does this admin identity hold a given privilege? The master always does (root); a
 // named admin only if it's in their granted set. Unknown user / bad JSON → false.
@@ -925,6 +944,12 @@ export default {
   async fetch(request, env, _ctx) {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors(env) });
     const url = new URL(request.url), p = url.pathname;
+    // Whole-API per-IP flood guard (except health), so no endpoint — not just
+    // /api/build — can burn the free-tier request/D1 budget (audit H1).
+    if (p.startsWith("/api/") && p !== "/api/health") {
+      const gip = ipBucket(request.headers.get("CF-Connecting-IP") || "");
+      if (!(await rlGuard(env, gip, 90, 60))) return json({ error: "too many requests — slow down" }, 429, env);
+    }
     try {
       if (p === "/api/health") return new Response("ok", { headers: cors(env) });
       if (p === "/api/defconfigs" && request.method === "GET") return await handleDefconfigs(env, url.searchParams.get("ref"));
