@@ -50,7 +50,7 @@ const THINGINO_CACHE_SECS: i64 = 300; // trust a resolved commit/list this long
 const SESSION_TTL_SECS: i64 = 8 * 3600;
 const TOKEN_REFRESH_SECS: i64 = 3300; // re-mint the App token before its ~1h expiry
 const RELEASE_CACHE_SECS: i64 = 600;
-const EVENT_TTL_SECS: i64 = 30 * DAY_SECS; // prune audit events older than this
+const EVENT_TTL_SECS: i64 = 7 * DAY_SECS; // prune audit events older than this
 const EXPIRED_BUILD_TTL_SECS: i64 = 7 * DAY_SECS; // drop long-expired build rows
 const LOGIN_FAIL_WINDOW_SECS: i64 = 900; // admin-login throttle window
 const LOGIN_FAIL_MAX: i64 = 10; // ...and max failures within it per IP
@@ -297,9 +297,23 @@ fn bearer(headers: &HeaderMap) -> Option<&str> {
 fn session_admin(headers: &HeaderMap, st: &AppState) -> Option<String> {
     let tok = bearer(headers)?;
     let now_ts = now();
-    let mut s = st.sessions.lock();
-    s.retain(|_, (_, exp)| *exp > now_ts);
-    s.get(tok).filter(|(id, exp)| *exp > now_ts && !id.is_empty()).map(|(id, _)| id.clone())
+    let id = {
+        let mut s = st.sessions.lock();
+        s.retain(|_, (_, exp)| *exp > now_ts);
+        s.get(tok).filter(|(id, exp)| *exp > now_ts && !id.is_empty()).map(|(id, _)| id.clone())
+    }?;
+    // Revocation is authoritative: a named admin's session is valid only while their
+    // account still exists and isn't disabled (master is env-based, always valid).
+    if id != "master" {
+        let conn = st.db.lock();
+        let ok = conn
+            .query_row("SELECT disabled FROM admins WHERE username=?1", [&id], |r| r.get::<_, i64>(0))
+            .optional().ok().flatten().map(|d| d == 0).unwrap_or(false);
+        if !ok {
+            return None;
+        }
+    }
+    Some(id)
 }
 fn session_ok(headers: &HeaderMap, st: &AppState) -> bool {
     session_admin(headers, st).is_some()
@@ -906,7 +920,7 @@ async fn post_build(
             )
             .unwrap_or(0);
         if global_n >= lim.global_hourly {
-            log_event(&conn, "rate_limited", None, Some(&uid), Some(&ip), "global hourly limit", Some(&ip_full));
+            // No durable event per rejection (bounds the events table under a flood).
             return json_uid(StatusCode::TOO_MANY_REQUESTS, &uid, json!({"error": format!("the builder is at its hourly limit ({}/hr) — try again later", lim.global_hourly)}));
         }
         // Per-user cap. NB: uid is client-supplied, so this is a soft/UX limit — the
@@ -920,7 +934,6 @@ async fn post_build(
             )
             .unwrap_or(0);
         if user_n >= lim.user_hourly {
-            log_event(&conn, "rate_limited", None, Some(&uid), Some(&ip), "per-user hourly limit", Some(&ip_full));
             return json_uid(StatusCode::TOO_MANY_REQUESTS, &uid, json!({"error": format!("you've reached {} builds this hour — try again later", lim.user_hourly)}));
         }
         let ip_n: i64 = conn
@@ -931,7 +944,6 @@ async fn post_build(
             )
             .unwrap_or(0);
         if ip_n >= lim.ip_hourly {
-            log_event(&conn, "rate_limited", None, Some(&uid), Some(&ip), "per-ip hourly limit", Some(&ip_full));
             return json_uid(StatusCode::TOO_MANY_REQUESTS, &uid, json!({"error": "too many builds from your network this hour — try again later"}));
         }
         if let Err(e) = conn.execute(
@@ -1349,8 +1361,14 @@ async fn admin_cancel(State(st): State<AppState>, headers: HeaderMap, Path(build
 
 /// Admin: remove a finished build's artifact + Actions run early (the reaper's job, on demand).
 async fn admin_expire(State(st): State<AppState>, headers: HeaderMap, Path(build_id): Path<String>) -> Response {
-    if !session_ok(&headers, &st) {
+    let Some(identity) = session_admin(&headers, &st) else {
         return json_err(StatusCode::UNAUTHORIZED, "admin auth required");
+    };
+    {
+        let conn = st.db.lock();
+        if !admin_can(&conn, &identity, "clear_builds") {
+            return json_err(StatusCode::FORBIDDEN, "not permitted");
+        }
     }
     if !valid_build_id(&build_id) {
         return json_err(StatusCode::BAD_REQUEST, "bad build_id");
@@ -1906,7 +1924,7 @@ fn valid_ref(req: &str) -> &'static str {
 /// Latest commit sha on a (validated) branch of the thingino repo.
 async fn fetch_commit(st: &AppState, git_ref: &str) -> Option<String> {
     let url = format!("https://api.github.com/repos/{}/commits/{}", st.cfg.thingino_repo, git_ref);
-    match gh(st.http.get(&url)).send().await {
+    match gh(st.http.get(&url).bearer_auth(github_token(st).await)).send().await {
         Ok(r) => r.json::<serde_json::Value>().await.ok().and_then(|v| v["sha"].as_str().map(|s| s.to_string())),
         Err(_) => None,
     }
@@ -1920,7 +1938,7 @@ fn valid_board(n: &str) -> bool {
 /// Dir names (board folders) under configs/<subdir> at a commit.
 async fn fetch_camera_dir(st: &AppState, commit: &str, subdir: &str) -> Option<Vec<String>> {
     let url = format!("https://api.github.com/repos/{}/contents/configs/{}?ref={}", st.cfg.thingino_repo, subdir, commit);
-    let v: serde_json::Value = gh(st.http.get(&url)).send().await.ok()?.json().await.ok()?;
+    let v: serde_json::Value = gh(st.http.get(&url).bearer_auth(github_token(st).await)).send().await.ok()?.json().await.ok()?;
     let list: Vec<String> = v
         .as_array()?
         .iter()
@@ -2092,6 +2110,14 @@ async fn scheduler_step(st: &AppState) -> anyhow::Result<()> {
                 }
                 Some(r) => {
                     let _ = cancel_run(st, r.run_id).await; // run still active — (re)request cancellation
+                    // Backstop: force-finish if it won't stop within the build timeout, so it
+                    // can't pin a concurrency slot indefinitely.
+                    if now_ts - dispatched_ts > lim.build_timeout {
+                        let _ = delete_run(st, r.run_id).await;
+                        let conn = st.db.lock();
+                        conn.execute("UPDATE builds SET state='cancelled', finished_ts=?2, run_id=NULL WHERE id=?1", rusqlite::params![id, now_ts]).ok();
+                        log_event(&conn, "cancelled", Some(id), None, None, "force-cancelled at timeout", None);
+                    }
                 }
                 None => {
                     let conn = st.db.lock();
@@ -2115,13 +2141,17 @@ async fn scheduler_step(st: &AppState) -> anyhow::Result<()> {
                         _ => "failed",
                     };
                     let conn = st.db.lock();
-                    conn.execute("UPDATE builds SET state=?2, finished_ts=?3 WHERE id=?1", rusqlite::params![id, new_state, now_ts]).ok();
-                    // All-time count of successful builds (in settings; survives the reaper +
-                    // clear-logs + clear-builds, which only touch builds/events).
-                    if new_state == "done" {
-                        conn.execute("INSERT INTO settings(key,value) VALUES('total_done','1') ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1", []).ok();
+                    // Guard on state='running' so overlapping ticks can't double-apply the
+                    // transition (double-counting total_done + duplicating GitHub cleanup).
+                    let changed = conn.execute("UPDATE builds SET state=?2, finished_ts=?3 WHERE id=?1 AND state='running'", rusqlite::params![id, new_state, now_ts]).unwrap_or(0);
+                    if changed == 1 {
+                        // All-time count of successful builds (in settings; survives the reaper +
+                        // clear-logs + clear-builds, which only touch builds/events).
+                        if new_state == "done" {
+                            conn.execute("INSERT INTO settings(key,value) VALUES('total_done','1') ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1", []).ok();
+                        }
+                        log_event(&conn, new_state, Some(id), None, None, &format!("run {} {}", r.run_id, r.conclusion.as_deref().unwrap_or("?")), None);
                     }
-                    log_event(&conn, new_state, Some(id), None, None, &format!("run {} {}", r.run_id, r.conclusion.as_deref().unwrap_or("?")), None);
                 } else if now_ts - dispatched_ts > lim.build_timeout {
                     // Run is still listed but hasn't completed within the timeout: cancel it and
                     // fail the build (don't hold the DB lock across the async cancel_run).
