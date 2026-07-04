@@ -44,6 +44,7 @@ I18N.add("ja", {
   request_failed: "リクエストに失敗しました（{status}）。",
   gear_title: "設定",
   settings_title: "設定",
+  settings_lang: "言語",
   close_btn: "閉じる",
   branch_label: "ビルドに使用する thingino ブランチ：",
   branch_default: "（デフォルト）",

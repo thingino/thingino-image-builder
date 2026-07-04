@@ -44,6 +44,7 @@ I18N.add("en", {
   request_failed: "Request failed ({status}).",
   gear_title: "Settings",
   settings_title: "Settings",
+  settings_lang: "Language",
   close_btn: "Close",
   branch_label: "thingino branch to build from:",
   branch_default: "(default)",

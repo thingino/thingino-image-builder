@@ -44,6 +44,7 @@ I18N.add("pt", {
   request_failed: "Falha na requisição ({status}).",
   gear_title: "Configurações",
   settings_title: "Configurações",
+  settings_lang: "Idioma",
   close_btn: "Fechar",
   branch_label: "branch do thingino para compilar:",
   branch_default: "(padrão)",

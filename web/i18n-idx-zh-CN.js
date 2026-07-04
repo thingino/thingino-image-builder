@@ -44,6 +44,7 @@ I18N.add("zh-CN", {
   request_failed: "请求失败（{status}）。",
   gear_title: "设置",
   settings_title: "设置",
+  settings_lang: "语言",
   close_btn: "关闭",
   branch_label: "用于构建的 thingino 分支：",
   branch_default: "（默认）",

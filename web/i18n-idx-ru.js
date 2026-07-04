@@ -44,6 +44,7 @@ I18N.add("ru", {
   request_failed: "Ошибка запроса ({status}).",
   gear_title: "Настройки",
   settings_title: "Настройки",
+  settings_lang: "Язык",
   close_btn: "Закрыть",
   branch_label: "ветка thingino для сборки:",
   branch_default: "(по умолчанию)",

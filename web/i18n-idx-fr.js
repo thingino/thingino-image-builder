@@ -44,6 +44,7 @@ I18N.add("fr", {
   request_failed: "Échec de la requête ({status}).",
   gear_title: "Paramètres",
   settings_title: "Paramètres",
+  settings_lang: "Langue",
   close_btn: "Fermer",
   branch_label: "branche thingino à partir de laquelle générer :",
   branch_default: "(par défaut)",

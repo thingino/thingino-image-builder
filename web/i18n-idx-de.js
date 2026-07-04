@@ -44,6 +44,7 @@ I18N.add("de", {
   request_failed: "Anfrage fehlgeschlagen ({status}).",
   gear_title: "Einstellungen",
   settings_title: "Einstellungen",
+  settings_lang: "Sprache",
   close_btn: "Schließen",
   branch_label: "thingino-Branch, aus dem gebaut wird:",
   branch_default: "(Standard)",
