@@ -209,7 +209,7 @@ async function handleStats(request, env, ref) {
   const uid = resolveUid(request);
   const { commit } = await resolveThingino(env, ref);
   const cfg = await limits(env);
-  const avg = await env.DB.prepare("SELECT avg(finished_ts - dispatched_ts) a FROM builds WHERE state IN ('done','expired') AND finished_ts IS NOT NULL AND dispatched_ts IS NOT NULL").first();
+  const avg = await env.DB.prepare("SELECT avg(finished_ts - dispatched_ts) a FROM builds WHERE (outcome='done' OR (outcome IS NULL AND state='done')) AND finished_ts IS NOT NULL AND dispatched_ts IS NOT NULL").first();
   return json({
     running: await countQ(env, "SELECT count(*) c FROM builds WHERE state='running'"),
     queued: await countQ(env, "SELECT count(*) c FROM builds WHERE state='queued'"),
@@ -340,7 +340,7 @@ async function handleStatus(id, env) {
 // run inline if we can find it (the cron retries otherwise). Returns the new state.
 async function doCancel(env, b, id, uid) {
   if (b.state === "queued") {
-    await env.DB.prepare("UPDATE builds SET state='cancelled', finished_ts=? WHERE id=?").bind(nowSec(), id).run();
+    await env.DB.prepare("UPDATE builds SET state='cancelled', outcome='cancelled', finished_ts=? WHERE id=?").bind(nowSec(), id).run();
     await logEvent(env, "cancelled", id, uid, null, "cancelled while queued");
     return "cancelled";
   }
@@ -472,7 +472,7 @@ async function schedulerWork(env, ts) {
     if (b.cancel_requested) {
       if (m && m.status === "completed") {
         await deleteRun(env, m.run_id);
-        await env.DB.prepare("UPDATE builds SET state='cancelled', finished_ts=?, run_id=NULL WHERE id=?").bind(ts, b.id).run();
+        await env.DB.prepare("UPDATE builds SET state='cancelled', outcome='cancelled', finished_ts=?, run_id=NULL WHERE id=?").bind(ts, b.id).run();
         await logEvent(env, "cancelled", b.id, null, null, "run stopped + deleted");
       } else if (m) {
         await cancelRun(env, m.run_id);
@@ -480,13 +480,13 @@ async function schedulerWork(env, ts) {
         // it can't pin a concurrency slot indefinitely.
         if (ts - (b.dispatched_ts || ts) > cfg.buildTimeout) {
           await deleteRun(env, m.run_id);
-          await env.DB.prepare("UPDATE builds SET state='cancelled', finished_ts=?, run_id=NULL WHERE id=?").bind(ts, b.id).run();
+          await env.DB.prepare("UPDATE builds SET state='cancelled', outcome='cancelled', finished_ts=?, run_id=NULL WHERE id=?").bind(ts, b.id).run();
           await logEvent(env, "cancelled", b.id, null, null, "force-cancelled at timeout");
         }
       } else if (b.dispatched_ts && ts - b.dispatched_ts > 180) {
         // Give up only after a grace window — otherwise we'd orphan a run that
         // simply hasn't appeared in the runs list yet.
-        await env.DB.prepare("UPDATE builds SET state='cancelled', finished_ts=? WHERE id=?").bind(ts, b.id).run();
+        await env.DB.prepare("UPDATE builds SET state='cancelled', outcome='cancelled', finished_ts=? WHERE id=?").bind(ts, b.id).run();
         await logEvent(env, "cancelled", b.id, null, null, "cancelled (run not found after grace)");
       }
       // else: stay 'cancelling' and retry next tick
@@ -498,7 +498,7 @@ async function schedulerWork(env, ts) {
         const st = m.conclusion === "success" ? "done" : m.conclusion === "cancelled" ? "cancelled" : "failed";
         // Guard on state='running' so two overlapping cron ticks can't both apply the
         // transition (which would double-count total_done + duplicate GitHub cleanup).
-        const fin = await env.DB.prepare("UPDATE builds SET state=?, finished_ts=? WHERE id=? AND state='running'").bind(st, ts, b.id).run();
+        const fin = await env.DB.prepare("UPDATE builds SET state=?, outcome=?, finished_ts=? WHERE id=? AND state='running'").bind(st, st, ts, b.id).run();
         if ((fin.meta?.changes ?? 0) === 1) {
           // All-time count of successful builds. Lives in settings, so it survives the
           // reaper + clear-logs + clear-builds (which only touch builds/events).
@@ -508,11 +508,11 @@ async function schedulerWork(env, ts) {
       } else if (ts - (b.dispatched_ts || ts) > cfg.buildTimeout) {
         // Run is listed but still in-progress past the timeout — stop it and fail the build.
         await cancelRun(env, m.run_id);
-        await env.DB.prepare("UPDATE builds SET state='failed', finished_ts=?, run_id=? WHERE id=?").bind(ts, m.run_id, b.id).run();
+        await env.DB.prepare("UPDATE builds SET state='failed', outcome='failed', finished_ts=?, run_id=? WHERE id=?").bind(ts, m.run_id, b.id).run();
         await logEvent(env, "failed", b.id, null, null, `timed out after ${cfg.buildTimeout}s (run cancelled)`);
       }
     } else if (ts - (b.dispatched_ts || ts) > cfg.buildTimeout) {
-      await env.DB.prepare("UPDATE builds SET state='failed', finished_ts=? WHERE id=?").bind(ts, b.id).run();
+      await env.DB.prepare("UPDATE builds SET state='failed', outcome='failed', finished_ts=? WHERE id=?").bind(ts, b.id).run();
       await logEvent(env, "failed", b.id, null, null, "timed out / run not found");
     }
   }
@@ -530,7 +530,7 @@ async function schedulerWork(env, ts) {
       await env.DB.prepare("UPDATE builds SET state='queued', dispatched_ts=NULL, attempts=attempts+1 WHERE id=?").bind(q.id).run();
       const at = ((await env.DB.prepare("SELECT attempts FROM builds WHERE id=?").bind(q.id).first()) || { attempts: 0 }).attempts;
       if (at >= 3) {
-        await env.DB.prepare("UPDATE builds SET state='failed', finished_ts=? WHERE id=?").bind(nowSec(), q.id).run();
+        await env.DB.prepare("UPDATE builds SET state='failed', outcome='failed', finished_ts=? WHERE id=?").bind(nowSec(), q.id).run();
         await logEvent(env, "failed", q.id, null, null, "dispatch failed 3x");
       }
     }
@@ -826,10 +826,11 @@ async function handleAdminStats(request, env) {
   const counts = {};
   for (const s of ["queued", "running", "done", "failed", "cancelled", "expired"])
     counts[s] = await countQ(env, "SELECT count(*) c FROM builds WHERE state=?", s);
-  const avg = await env.DB.prepare("SELECT avg(finished_ts - dispatched_ts) a FROM builds WHERE state IN ('done','expired') AND finished_ts IS NOT NULL AND dispatched_ts IS NOT NULL").first();
-  const builds = ((await env.DB.prepare("SELECT id,defconfig,state,created_ts,dispatched_ts,finished_ts,run_id,cancel_requested,uid,ip_bucket,ip_full FROM builds ORDER BY created_ts DESC LIMIT 25").all()).results || []).map((b) => ({
+  const avg = await env.DB.prepare("SELECT avg(finished_ts - dispatched_ts) a FROM builds WHERE (outcome='done' OR (outcome IS NULL AND state='done')) AND finished_ts IS NOT NULL AND dispatched_ts IS NOT NULL").first();
+  const builds = ((await env.DB.prepare("SELECT id,defconfig,state,outcome,created_ts,dispatched_ts,finished_ts,run_id,cancel_requested,uid,ip_bucket,ip_full FROM builds ORDER BY created_ts DESC LIMIT 25").all()).results || []).map((b) => ({
     build_id: b.id, defconfig: b.defconfig,
     state: b.state === "running" && b.cancel_requested ? "cancelling" : b.state,
+    outcome: b.outcome,
     created_ts: b.created_ts, dispatched_ts: b.dispatched_ts, finished_ts: b.finished_ts, run_id: b.run_id, uid: b.uid,
     ip: b.ip_full || b.ip_bucket, ip_bucket: b.ip_bucket,
   }));

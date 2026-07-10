@@ -16,7 +16,8 @@ const dur=(a,b)=>{ if(!a||!b) return '–'; const s=b-a; return `${Math.floor(s/
 const ago=ts=>{ const s=Math.floor(Date.now()/1000)-ts; if(s<60)return I18N.t('ago_seconds',{n:s}); if(s<3600)return I18N.t('ago_minutes',{n:Math.floor(s/60)}); return I18N.t('ago_hours',{n:Math.floor(s/3600)}); };
 const PILL={queued:'bg-info text-dark',running:'bg-primary',cancelling:'bg-warning text-dark',done:'bg-success',failed:'bg-danger',cancelled:'bg-secondary',expired:'bg-dark border'};
 const stateLabel=s=>{ const v=I18N.t('state_'+s); return v==='state_'+s?s:v; };
-const pill=s=>`<span class="badge ${PILL[s]||'bg-secondary'}">${esc(stateLabel(s))}</span>`;
+// An expired build keeps its terminal result in `outcome`, so show e.g. "expired (done)".
+const pill=(s,o)=>{ const t=(s==='expired'&&o)?`${stateLabel(s)} (${stateLabel(o)})`:stateLabel(s); return `<span class="badge ${PILL[s]||'bg-secondary'}" title="${esc(t)}">${esc(t)}</span>`; };
 const tile=(l,n)=>`<div class="col-6 col-md-3 col-lg-2"><div class="card text-center h-100"><div class="card-body py-2 px-1"><div class="fs-4 fw-bold">${n??0}</div><div class="small muted text-uppercase">${l}</div></div></div></div>`;
 
 async function adminGet(){ const r=await fetch(API+'/api/admin/stats',{headers:{Authorization:'Bearer '+tok()}}); if(r.status===401){ const e=new Error('unauthorized'); e.auth=1; throw e; } if(!r.ok) throw new Error('http '+r.status); return r.json(); }
@@ -57,7 +58,7 @@ async function refresh(){
   isMaster=!!d.master; if(d.master||d.manage_users){ if(!usersShown){ $('users-card').style.display=''; usersShown=true; renderUsers(); } } else $('users-card').style.display='none';
   const c=d.counts||{};
   $('tiles').innerHTML=[['state_running',c.running],['state_queued',c.queued],['state_done',c.done],['state_failed',c.failed],['state_cancelled',c.cancelled],['state_expired',c.expired],['tile_24h',d.last24h],['tile_total_done',d.total_done??0],['tile_avg_build',d.avg_build_secs?Math.round(d.avg_build_secs/60)+'m':'–']].map(([k,n])=>tile(I18N.t(k),n)).join('');
-  $('builds-body').innerHTML=(d.recent_builds||[]).map(b=>`<tr><td><code>${esc(short(b.build_id))}</code></td><td>${esc(b.defconfig)}</td><td>${pill(b.state)}${buildAction(b)}</td><td><code>${esc(short(b.uid))}</code></td><td>${ipcell(b.ip,b.ip_bucket)}</td><td>${ago(b.created_ts)}</td><td>${dur(b.dispatched_ts,b.finished_ts)}</td><td><code>${esc(b.run_id)}</code></td></tr>`).join('');
+  $('builds-body').innerHTML=(d.recent_builds||[]).map(b=>`<tr><td><code>${esc(short(b.build_id))}</code></td><td>${esc(b.defconfig)}</td><td>${pill(b.state,b.outcome)}${buildAction(b)}</td><td><code>${esc(short(b.uid))}</code></td><td>${ipcell(b.ip,b.ip_bucket)}</td><td>${ago(b.created_ts)}</td><td>${dur(b.dispatched_ts,b.finished_ts)}</td><td><code>${esc(b.run_id)}</code></td></tr>`).join('');
   $('events-body').innerHTML=(d.recent_events||[]).map(e=>`<tr><td>${tfmt(e.ts)}</td><td>${esc(e.kind)}</td><td><code>${esc(short(e.build_id))}</code></td><td><code>${esc(short(e.uid))}</code></td><td>${ipcell(e.ip,e.ip_bucket)}</td><td class="muted">${esc(e.detail)}</td></tr>`).join('');
   $('updated').textContent=I18N.t('updated',{t:new Date().toLocaleTimeString()});
 }

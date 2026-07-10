@@ -677,7 +677,8 @@ async fn main() -> anyhow::Result<()> {
             created_ts INTEGER NOT NULL,
             dispatched_ts INTEGER,
             finished_ts INTEGER,
-            commit_sha TEXT
+            commit_sha TEXT,
+            outcome TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_state ON builds(state);
         CREATE INDEX IF NOT EXISTS idx_uid_created ON builds(uid, created_ts);
@@ -713,6 +714,7 @@ async fn main() -> anyhow::Result<()> {
     )?;
     // Idempotent migrations for older DBs (swallow the "duplicate column" error on re-run).
     let _ = conn.execute("ALTER TABLE builds ADD COLUMN commit_sha TEXT", []);
+    let _ = conn.execute("ALTER TABLE builds ADD COLUMN outcome TEXT", []);
     let _ = conn.execute("ALTER TABLE builds ADD COLUMN ip_full TEXT", []);
     let _ = conn.execute("ALTER TABLE events ADD COLUMN ip_full TEXT", []);
     let _ = conn.execute("ALTER TABLE admins ADD COLUMN privileges TEXT", []);
@@ -822,7 +824,7 @@ async fn get_stats(State(st): State<AppState>, Query(q): Query<RefQuery>, header
     let queued: i64 = conn.query_row("SELECT count(*) FROM builds WHERE state='queued'", [], |r| r.get(0)).unwrap_or(0);
     let avg: Option<f64> = conn
         .query_row(
-            "SELECT avg(finished_ts - dispatched_ts) FROM builds WHERE state='done' AND finished_ts IS NOT NULL AND dispatched_ts IS NOT NULL AND finished_ts > ?1",
+            "SELECT avg(finished_ts - dispatched_ts) FROM builds WHERE (outcome='done' OR (outcome IS NULL AND state='done')) AND finished_ts IS NOT NULL AND dispatched_ts IS NOT NULL AND finished_ts > ?1",
             [now_ts - DAY_SECS],
             |r| r.get(0),
         )
@@ -1025,7 +1027,7 @@ async fn do_cancel(st: &AppState, id: &str, state: &str, run_id: Option<i64>, ui
     let now_ts = now();
     if state == "queued" {
         let conn = st.db.lock();
-        conn.execute("UPDATE builds SET state='cancelled', finished_ts=?2 WHERE id=?1", rusqlite::params![id, now_ts]).ok();
+        conn.execute("UPDATE builds SET state='cancelled', outcome='cancelled', finished_ts=?2 WHERE id=?1", rusqlite::params![id, now_ts]).ok();
         log_event(&conn, "cancelled", Some(id), uid, None, "cancelled while queued", None);
         return "cancelled".to_string();
     }
@@ -1232,7 +1234,7 @@ async fn admin_stats(State(st): State<AppState>, headers: HeaderMap) -> Response
     let last24: i64 = conn.query_row("SELECT count(*) FROM builds WHERE created_ts > ?1", [now_ts - DAY_SECS], |r| r.get(0)).unwrap_or(0);
     let total_done: i64 = get_setting(&conn, "total_done").and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
     let avg: Option<f64> = conn
-        .query_row("SELECT avg(finished_ts - dispatched_ts) FROM builds WHERE state='done' AND finished_ts IS NOT NULL AND dispatched_ts IS NOT NULL", [], |r| r.get(0))
+        .query_row("SELECT avg(finished_ts - dispatched_ts) FROM builds WHERE (outcome='done' OR (outcome IS NULL AND state='done')) AND finished_ts IS NOT NULL AND dispatched_ts IS NOT NULL", [], |r| r.get(0))
         .optional().ok().flatten();
     // Builds counted against the global hourly cap in the current (post-reset) window.
     let reset_ts = get_setting(&conn, "limits_reset_ts").and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
@@ -1801,7 +1803,7 @@ fn latest_user_build(conn: &Connection, cfg: &Config, uid: &str, now_ts: i64) ->
 
 fn query_recent_builds(conn: &Connection, limit: i64) -> Vec<serde_json::Value> {
     let Ok(mut stmt) = conn.prepare(
-        "SELECT id, defconfig, state, created_ts, dispatched_ts, finished_ts, run_id, cancel_requested, uid, ip_bucket, ip_full FROM builds ORDER BY created_ts DESC LIMIT ?1",
+        "SELECT id, defconfig, state, created_ts, dispatched_ts, finished_ts, run_id, cancel_requested, uid, ip_bucket, ip_full, outcome FROM builds ORDER BY created_ts DESC LIMIT ?1",
     ) else {
         return vec![];
     };
@@ -1817,6 +1819,7 @@ fn query_recent_builds(conn: &Connection, limit: i64) -> Vec<serde_json::Value> 
             "build_id": r.get::<_, String>(0)?,
             "defconfig": r.get::<_, String>(1)?,
             "state": state,
+            "outcome": r.get::<_, Option<String>>(11)?,
             "created_ts": r.get::<_, i64>(3)?,
             "dispatched_ts": r.get::<_, Option<i64>>(4)?,
             "finished_ts": r.get::<_, Option<i64>>(5)?,
@@ -2105,7 +2108,7 @@ async fn scheduler_step(st: &AppState) -> anyhow::Result<()> {
                 Some(r) if r.status == "completed" => {
                     let _ = delete_run(st, r.run_id).await; // wipe the cancelled run + its logs now, not at retention
                     let conn = st.db.lock();
-                    conn.execute("UPDATE builds SET state='cancelled', finished_ts=?2, run_id=NULL WHERE id=?1", rusqlite::params![id, now_ts]).ok();
+                    conn.execute("UPDATE builds SET state='cancelled', outcome='cancelled', finished_ts=?2, run_id=NULL WHERE id=?1", rusqlite::params![id, now_ts]).ok();
                     log_event(&conn, "cancelled", Some(id), None, None, "run stopped + deleted", None);
                 }
                 Some(r) => {
@@ -2115,13 +2118,13 @@ async fn scheduler_step(st: &AppState) -> anyhow::Result<()> {
                     if now_ts - dispatched_ts > lim.build_timeout {
                         let _ = delete_run(st, r.run_id).await;
                         let conn = st.db.lock();
-                        conn.execute("UPDATE builds SET state='cancelled', finished_ts=?2, run_id=NULL WHERE id=?1", rusqlite::params![id, now_ts]).ok();
+                        conn.execute("UPDATE builds SET state='cancelled', outcome='cancelled', finished_ts=?2, run_id=NULL WHERE id=?1", rusqlite::params![id, now_ts]).ok();
                         log_event(&conn, "cancelled", Some(id), None, None, "force-cancelled at timeout", None);
                     }
                 }
                 None => {
                     let conn = st.db.lock();
-                    conn.execute("UPDATE builds SET state='cancelled', finished_ts=?2 WHERE id=?1", rusqlite::params![id, now_ts]).ok();
+                    conn.execute("UPDATE builds SET state='cancelled', outcome='cancelled', finished_ts=?2 WHERE id=?1", rusqlite::params![id, now_ts]).ok();
                     log_event(&conn, "cancelled", Some(id), None, None, "cancelled (run not found)", None);
                 }
             }
@@ -2143,7 +2146,7 @@ async fn scheduler_step(st: &AppState) -> anyhow::Result<()> {
                     let conn = st.db.lock();
                     // Guard on state='running' so overlapping ticks can't double-apply the
                     // transition (double-counting total_done + duplicating GitHub cleanup).
-                    let changed = conn.execute("UPDATE builds SET state=?2, finished_ts=?3 WHERE id=?1 AND state='running'", rusqlite::params![id, new_state, now_ts]).unwrap_or(0);
+                    let changed = conn.execute("UPDATE builds SET state=?2, outcome=?2, finished_ts=?3 WHERE id=?1 AND state='running'", rusqlite::params![id, new_state, now_ts]).unwrap_or(0);
                     if changed == 1 {
                         // All-time count of successful builds (in settings; survives the reaper +
                         // clear-logs + clear-builds, which only touch builds/events).
@@ -2157,14 +2160,14 @@ async fn scheduler_step(st: &AppState) -> anyhow::Result<()> {
                     // fail the build (don't hold the DB lock across the async cancel_run).
                     let _ = cancel_run(st, r.run_id).await;
                     let conn = st.db.lock();
-                    conn.execute("UPDATE builds SET state='failed', finished_ts=?2 WHERE id=?1", rusqlite::params![id, now_ts]).ok();
+                    conn.execute("UPDATE builds SET state='failed', outcome='failed', finished_ts=?2 WHERE id=?1", rusqlite::params![id, now_ts]).ok();
                     log_event(&conn, "failed", Some(id), None, None, "timed out (run still running)", None);
                 }
             }
             None => {
                 if now_ts - dispatched_ts > lim.build_timeout {
                     let conn = st.db.lock();
-                    conn.execute("UPDATE builds SET state='failed', finished_ts=?2 WHERE id=?1", rusqlite::params![id, now_ts]).ok();
+                    conn.execute("UPDATE builds SET state='failed', outcome='failed', finished_ts=?2 WHERE id=?1", rusqlite::params![id, now_ts]).ok();
                     log_event(&conn, "failed", Some(id), None, None, "timed out / run not found", None);
                 }
             }
@@ -2191,7 +2194,7 @@ async fn scheduler_step(st: &AppState) -> anyhow::Result<()> {
                 conn.execute("UPDATE builds SET attempts=attempts+1 WHERE id=?1", [id]).ok();
                 let attempts: i64 = conn.query_row("SELECT attempts FROM builds WHERE id=?1", [id], |r| r.get(0)).unwrap_or(0);
                 if attempts >= 3 {
-                    conn.execute("UPDATE builds SET state='failed', finished_ts=?2 WHERE id=?1", rusqlite::params![id, now()]).ok();
+                    conn.execute("UPDATE builds SET state='failed', outcome='failed', finished_ts=?2 WHERE id=?1", rusqlite::params![id, now()]).ok();
                     log_event(&conn, "failed", Some(id), None, None, "dispatch failed 3x", None);
                 }
                 tracing::warn!("dispatch failed for {id} (attempt {attempts}): {e}");

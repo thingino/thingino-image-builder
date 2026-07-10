@@ -13,7 +13,8 @@ CREATE TABLE IF NOT EXISTS builds (
   created_ts INTEGER NOT NULL,
   dispatched_ts INTEGER,
   finished_ts INTEGER,
-  commit_sha TEXT
+  commit_sha TEXT,
+  outcome TEXT  -- terminal result (done/failed/cancelled), preserved after state later becomes 'expired'
 );
 CREATE INDEX IF NOT EXISTS idx_state ON builds(state);
 CREATE INDEX IF NOT EXISTS idx_uid_created ON builds(uid, created_ts);
