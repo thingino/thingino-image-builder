@@ -60,4 +60,5 @@ I18N.add("en", {
   help_branch: "Pick the thingino branch to build: master (default), ciao, or stable. The camera list updates to match.",
   setting_help_label: "Show help hints: hover any control for a tip (or use the ? button).",
   privacy_link: "privacy",
+  over_capacity: "The service has hit its daily request limit, it resumes at {t}.",
 });

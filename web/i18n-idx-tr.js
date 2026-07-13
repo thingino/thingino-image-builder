@@ -60,4 +60,5 @@ I18N.add("tr", {
   help_branch: "Derlenecek thingino dalını seçin: master (varsayılan), ciao veya stable. Kamera listesi buna göre güncellenir.",
   setting_help_label: "Yardım ipuçlarını göster: ipucu için herhangi bir kontrolün üzerine gelin (veya ? düğmesini kullanın).",
   privacy_link: "gizlilik",
+  over_capacity: "Hizmet günlük istek sınırına ulaştı, {t} itibarıyla yeniden başlayacak.",
 });

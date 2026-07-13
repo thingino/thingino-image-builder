@@ -60,4 +60,5 @@ I18N.add("zh-CN", {
   help_branch: "选择用于构建的 thingino 分支：master（默认）、ciao 或 stable。摄像头列表会相应更新。",
   setting_help_label: "显示帮助提示：将鼠标悬停在任意控件上即可查看提示（或使用 ? 按钮）。",
   privacy_link: "隐私",
+  over_capacity: "服务已达到每日请求上限，将于 {t} 恢复。",
 });

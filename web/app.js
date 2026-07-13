@@ -26,13 +26,25 @@
   }
 
   function validate(){
-    const v=$('board').value.trim(); $('go').disabled=!allowed.has(v);
+    const v=$('board').value.trim(); $('go').disabled=!allowed.has(v)||$('board').disabled;
     const h=$('hint');
     if(v && !allowed.has(v)){ h.textContent=I18N.t('not_known_defconfig'); h.className='form-text text-danger'; }
     else { h.textContent=allowed.size?I18N.t('profiles_available',{n:allowed.size}):''; h.className='form-text muted'; }
   }
+  // Cloudflare's free daily request limit answers with a bare non-JSON 429 (our own
+  // throttle 429s always carry a JSON error), so that shape means "out of capacity".
+  const overCap=r=>r.status===429&&!r.data;
+  function capacityBanner(){
+    const n=new Date(), reset=new Date(Date.UTC(n.getUTCFullYear(),n.getUTCMonth(),n.getUTCDate()+1));
+    const b=$('banner');
+    b.innerHTML='<i class="bi bi-hourglass-split me-1"></i>'+esc(I18N.t('over_capacity',{t:reset.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}));
+    b.classList.remove('d-none');
+    $('board').disabled=true; $('go').disabled=true;
+  }
   async function loadBoards(){
-    const {ok,data}=await api('/api/defconfigs?ref='+encodeURIComponent(curRef));
+    const r=await api('/api/defconfigs?ref='+encodeURIComponent(curRef));
+    if(overCap(r)){ capacityBanner(); return; }
+    const {ok,data}=r;
     if(!ok||!Array.isArray(data)){ const h=$('hint'); h.textContent=I18N.t('cameras_load_failed'); h.className='form-text text-danger'; return; }
     data.sort(); allowed=new Set(data);
     $('boards').innerHTML=data.map(b=>`<option value="${esc(b)}">`).join('');
@@ -48,6 +60,9 @@
     const b=$('banner');
     if(d.builds_enabled===false){ b.innerHTML='<i class="bi bi-exclamation-triangle me-1"></i>'+I18N.t('builds_disabled'); b.classList.remove('d-none'); }
     else b.classList.add('d-none');
+    // During maintenance (kill switch off) the picker is disabled, not just the banner.
+    const off=d.builds_enabled===false;
+    if($('board').disabled!==off){ $('board').disabled=off; validate(); }
     renderFooterLimits();
   }
 
@@ -87,7 +102,9 @@
   }
 
   async function refresh(){
-    const {ok,data}=await api('/api/stats?ref='+encodeURIComponent(curRef));
+    const r=await api('/api/stats?ref='+encodeURIComponent(curRef));
+    if(overCap(r)){ capacityBanner(); return; }
+    const {ok,data}=r;
     if(ok&&data){ maxConc=data.max_concurrent||6; avgSecs=data.avg_build_secs; userHourly=data.user_hourly||userHourly; if(data.retention_secs) retentionMins=Math.max(1,Math.round(data.retention_secs/60)); renderGlobal(data);
       if(!myId && data.you){ setMy(data.you.build_id); } }
     if(myId){

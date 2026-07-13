@@ -60,4 +60,5 @@ I18N.add("fr", {
   help_branch: "Choisissez la branche thingino à générer : master (par défaut), ciao ou stable. La liste des caméras est mise à jour en conséquence.",
   setting_help_label: "Affichez les astuces d'aide : survolez n'importe quel contrôle pour un conseil (ou utilisez le bouton ?).",
   privacy_link: "confidentialité",
+  over_capacity: "Le service a atteint sa limite quotidienne de requêtes, il reprend à {t}.",
 });
