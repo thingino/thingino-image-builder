@@ -143,4 +143,5 @@ I18N.add("tr", {
   confirm_cancel_build: "{id} derlemesi iptal edilsin mi?",
   confirm_remove_build: "{id} için yapıt + Actions çalıştırması şimdi kaldırılsın mı?",
   priv_manage_users: "kullanıcıları yönet",
+  over_capacity: "Hizmet günlük istek sınırına ulaştı, {t} itibarıyla yeniden başlayacak.",
 });

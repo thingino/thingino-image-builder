@@ -143,4 +143,5 @@ I18N.add("uk", {
   confirm_cancel_build: "Скасувати збірку {id}?",
   confirm_remove_build: "Видалити артефакт + запуск Actions для {id} зараз?",
   priv_manage_users: "керування користувачами",
+  over_capacity: "Сервіс досяг добового ліміту запитів, робота відновиться о {t}.",
 });

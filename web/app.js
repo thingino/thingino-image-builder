@@ -33,11 +33,11 @@
   }
   // Cloudflare's free daily request limit answers with a bare non-JSON 429 (our own
   // throttle 429s always carry a JSON error), so that shape means "out of capacity".
+  // Visitors just get the generic maintenance banner; the admin portal shows the cause.
   const overCap=r=>r.status===429&&!r.data;
   function capacityBanner(){
-    const n=new Date(), reset=new Date(Date.UTC(n.getUTCFullYear(),n.getUTCMonth(),n.getUTCDate()+1));
     const b=$('banner');
-    b.innerHTML='<i class="bi bi-hourglass-split me-1"></i>'+esc(I18N.t('over_capacity',{t:reset.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}));
+    b.innerHTML='<i class="bi bi-exclamation-triangle me-1"></i>'+I18N.t('builds_disabled');
     b.classList.remove('d-none');
     $('board').disabled=true; $('go').disabled=true;
   }

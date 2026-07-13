@@ -143,4 +143,5 @@ I18N.add("nl", {
   confirm_cancel_build: "Build {id} annuleren?",
   confirm_remove_build: "Het artefact + de Actions-run voor {id} nu verwijderen?",
   priv_manage_users: "gebruikers beheren",
+  over_capacity: "De service heeft zijn dagelijkse aanvraaglimiet bereikt en hervat om {t}.",
 });

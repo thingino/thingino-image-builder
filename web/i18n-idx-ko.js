@@ -60,5 +60,4 @@ I18N.add("ko", {
   help_branch: "빌드할 thingino 브랜치를 선택하세요: master(기본값), ciao 또는 stable. 카메라 목록도 그에 맞게 업데이트됩니다.",
   setting_help_label: "도움말 힌트 표시: 아무 컨트롤에나 마우스를 올리면 힌트가 표시됩니다(또는 ? 버튼 사용).",
   privacy_link: "개인정보처리방침",
-  over_capacity: "서비스가 일일 요청 한도에 도달했습니다. {t}에 재개됩니다.",
 });

@@ -20,7 +20,12 @@ const stateLabel=s=>{ const v=I18N.t('state_'+s); return v==='state_'+s?s:v; };
 const pill=(s,o)=>{ const t=(s==='expired'&&o)?`${stateLabel(s)} (${stateLabel(o)})`:stateLabel(s); return `<span class="badge ${PILL[s]||'bg-secondary'}" title="${esc(t)}">${esc(t)}</span>`; };
 const tile=(l,n)=>`<div class="col-6 col-md-3 col-lg-2"><div class="card text-center h-100"><div class="card-body py-2 px-1"><div class="fs-4 fw-bold">${n??0}</div><div class="small muted text-uppercase">${l}</div></div></div></div>`;
 
-async function adminGet(){ const r=await fetch(API+'/api/admin/stats',{headers:{Authorization:'Bearer '+tok()}}); if(r.status===401){ const e=new Error('unauthorized'); e.auth=1; throw e; } if(!r.ok) throw new Error('http '+r.status); return r.json(); }
+// Cloudflare's free daily request limit answers admin endpoints with a bare 429 (none of
+// our own admin routes emit 429), so that status means "out of capacity". Admin sees the
+// real cause; the public page just shows the generic maintenance banner.
+const capText=()=>{ const n=new Date(), reset=new Date(Date.UTC(n.getUTCFullYear(),n.getUTCMonth(),n.getUTCDate()+1)); return I18N.t('over_capacity',{t:reset.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}); };
+function showCap(on){ const b=$('cap-banner'); if(b){ if(on) b.textContent=capText(); b.style.display=on?'':'none'; } }
+async function adminGet(){ const r=await fetch(API+'/api/admin/stats',{headers:{Authorization:'Bearer '+tok()}}); if(r.status===401){ const e=new Error('unauthorized'); e.auth=1; throw e; } if(r.status===429){ const e=new Error('capacity'); e.cap=1; throw e; } if(!r.ok) throw new Error('http '+r.status); return r.json(); }
 let masterMode=false;
 function setMaster(on){ masterMode=on;
   $('username').style.display=on?'none':''; $('password').style.display=on?'none':''; $('token').style.display=on?'':'none';
@@ -34,14 +39,15 @@ async function login(){
   const r=await fetch(API+'/api/admin/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
   const d=await r.json().catch(()=>({}));
   if(r.ok&&d.session){ localStorage.setItem(TK,d.session); show(); }
-  else { $('gate-err').textContent=d.error||I18N.t('err_invalid_creds'); localStorage.removeItem(TK); }
+  else { $('gate-err').textContent=(r.status===429&&!d.error)?capText():(d.error||I18N.t('err_invalid_creds')); localStorage.removeItem(TK); }
 }
 function show(){ $('gate').style.display='none'; $('app').style.display=''; refresh(); }
 async function logout(){ try{ await fetch(API+'/api/admin/logout',{method:'POST',headers:{Authorization:'Bearer '+tok()}}); }catch{} localStorage.removeItem(TK); location.reload(); }
 
 let enabled=true;
 async function refresh(){
-  let d; try{ d=await adminGet(); }catch(e){ if(e&&e.auth) logout(); return; }
+  let d; try{ d=await adminGet(); }catch(e){ if(e&&e.auth){ logout(); } else if(e&&e.cap){ showCap(true); } return; }
+  showCap(false);
   enabled=d.builds_enabled;
   $('kill-state').innerHTML=enabled?'<span class="text-success">'+I18N.t('kill_enabled')+'</span>':'<span class="text-danger">'+I18N.t('kill_disabled')+'</span>';
   const kb=$('kill-btn'); kb.textContent=enabled?I18N.t('kill_disable'):I18N.t('kill_enable'); kb.className='btn btn-sm '+(enabled?'btn-outline-danger':'btn-thingino');

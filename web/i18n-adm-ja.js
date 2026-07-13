@@ -143,4 +143,5 @@ I18N.add("ja", {
   confirm_cancel_build: "ビルド {id} をキャンセルしますか？",
   confirm_remove_build: "{id} のアーティファクトと Actions 実行を今すぐ削除しますか？",
   priv_manage_users: "ユーザー管理",
+  over_capacity: "サービスは1日のリクエスト上限に達しました。{t} に再開します。",
 });

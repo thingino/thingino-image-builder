@@ -60,5 +60,4 @@ I18N.add("pl", {
   help_branch: "Wybierz gałąź thingino do zbudowania: master (domyślna), ciao lub stable. Lista kamer jest odpowiednio aktualizowana.",
   setting_help_label: "Pokaż podpowiedzi: najedź na dowolny element, aby zobaczyć wskazówkę (lub użyj przycisku ?).",
   privacy_link: "prywatność",
-  over_capacity: "Usługa osiągnęła dzienny limit żądań, wznowienie o {t}.",
 });

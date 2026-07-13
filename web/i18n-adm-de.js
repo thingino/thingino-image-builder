@@ -143,4 +143,5 @@ I18N.add("de", {
   confirm_cancel_build: "Build {id} abbrechen?",
   confirm_remove_build: "Artefakt + Actions-Run für {id} jetzt entfernen?",
   priv_manage_users: "Benutzer verwalten",
+  over_capacity: "Der Dienst hat sein tägliches Anfragelimit erreicht, er ist ab {t} wieder verfügbar.",
 });

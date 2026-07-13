@@ -143,4 +143,5 @@ I18N.add("zh-CN", {
   confirm_cancel_build: "取消构建 {id}？",
   confirm_remove_build: "立即移除 {id} 的工件 + Actions 运行记录？",
   priv_manage_users: "管理用户",
+  over_capacity: "服务已达到每日请求上限，将于 {t} 恢复。",
 });

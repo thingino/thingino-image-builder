@@ -143,4 +143,5 @@ I18N.add("en", {
   confirm_cancel_build: "Cancel build {id}?",
   confirm_remove_build: "Remove the artifact + Actions run for {id} now?",
   priv_manage_users: "manage users",
+  over_capacity: "The service has hit its daily request limit, it resumes at {t}.",
 });

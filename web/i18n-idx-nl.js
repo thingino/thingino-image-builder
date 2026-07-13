@@ -60,5 +60,4 @@ I18N.add("nl", {
   help_branch: "Kies de thingino-branch om te bouwen: master (standaard), ciao of stable. De cameralijst wordt overeenkomstig bijgewerkt.",
   setting_help_label: "Hulptips tonen: beweeg over een element voor een tip (of gebruik de knop ?).",
   privacy_link: "privacy",
-  over_capacity: "De service heeft zijn dagelijkse aanvraaglimiet bereikt en hervat om {t}.",
 });

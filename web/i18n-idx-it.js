@@ -60,5 +60,4 @@ I18N.add("it", {
   help_branch: "Scegli il ramo di thingino da compilare: master (predefinito), ciao o stable. L'elenco delle telecamere si aggiorna di conseguenza.",
   setting_help_label: "Mostra i suggerimenti di aiuto: passa il cursore su qualsiasi controllo per un consiglio (o usa il pulsante ?).",
   privacy_link: "privacy",
-  over_capacity: "Il servizio ha raggiunto il limite giornaliero di richieste, riprende alle {t}.",
 });

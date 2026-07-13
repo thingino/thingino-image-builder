@@ -60,5 +60,4 @@ I18N.add("de", {
   help_branch: "Wähle den thingino-Branch zum Bauen: master (Standard), ciao oder stable. Die Kameraliste wird entsprechend aktualisiert.",
   setting_help_label: "Hilfehinweise anzeigen: fahre über ein beliebiges Element für einen Tipp (oder nutze die Schaltfläche ?).",
   privacy_link: "Datenschutz",
-  over_capacity: "Der Dienst hat sein tägliches Anfragelimit erreicht, er ist ab {t} wieder verfügbar.",
 });

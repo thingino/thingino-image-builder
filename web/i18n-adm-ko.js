@@ -143,4 +143,5 @@ I18N.add("ko", {
   confirm_cancel_build: "빌드 {id}을(를) 취소하시겠습니까?",
   confirm_remove_build: "{id}의 아티팩트와 Actions 실행을 지금 삭제하시겠습니까?",
   priv_manage_users: "사용자 관리",
+  over_capacity: "서비스가 일일 요청 한도에 도달했습니다. {t}에 재개됩니다.",
 });

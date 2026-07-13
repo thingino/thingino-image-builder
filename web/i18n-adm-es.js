@@ -143,4 +143,5 @@ I18N.add("es", {
   confirm_cancel_build: "¿Cancelar la compilación {id}?",
   confirm_remove_build: "¿Eliminar ahora el artefacto + la ejecución de Actions de {id}?",
   priv_manage_users: "gestionar usuarios",
+  over_capacity: "El servicio ha alcanzado su límite diario de solicitudes, se reanuda a las {t}.",
 });

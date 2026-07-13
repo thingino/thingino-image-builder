@@ -143,4 +143,5 @@ I18N.add("ar", {
   confirm_cancel_build: "إلغاء البناء {id}؟",
   confirm_remove_build: "إزالة المُخرَج + تشغيل Actions لـ {id} الآن؟",
   priv_manage_users: "إدارة المستخدمين",
+  over_capacity: "وصلت الخدمة إلى حدّ الطلبات اليومي، وستستأنف عند {t}.",
 });

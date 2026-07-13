@@ -143,4 +143,5 @@ I18N.add("fr", {
   confirm_cancel_build: "Annuler la génération {id} ?",
   confirm_remove_build: "Supprimer l'artefact + l'exécution Actions pour {id} maintenant ?",
   priv_manage_users: "gérer les utilisateurs",
+  over_capacity: "Le service a atteint sa limite quotidienne de requêtes, il reprend à {t}.",
 });

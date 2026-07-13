@@ -60,5 +60,4 @@ I18N.add("ja", {
   help_branch: "ビルドする thingino ブランチを選択します：master（デフォルト）、ciao、または stable。カメラ一覧もそれに合わせて更新されます。",
   setting_help_label: "ヘルプヒントを表示：任意のコントロールにカーソルを合わせるとヒントが表示されます（または ? ボタンを使用）。",
   privacy_link: "プライバシー",
-  over_capacity: "サービスは1日のリクエスト上限に達しました。{t} に再開します。",
 });
