@@ -22,7 +22,7 @@ I18N.add("ar", {
   stats_queued: "في قائمة الانتظار",
   stats_typical: "البناء المعتاد",
   commit_badge_text: "{branch} @ {commit}",
-  builds_disabled: "عمليات البناء معطّلة مؤقتًا من قِبل المشرف.",
+  builds_disabled: "عمليات البناء معطّلة مؤقتًا بسبب صيانة جارية، يُرجى المحاولة لاحقًا.",
   meta_defconfig: "defconfig",
   meta_build_id: "معرّف البناء",
   deduped_note: "أُعيد استخدام صورة مطابقة موجودة",

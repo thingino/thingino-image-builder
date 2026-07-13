@@ -22,7 +22,7 @@ I18N.add("en", {
   stats_queued: "queued",
   stats_typical: "typical build",
   commit_badge_text: "{branch} @ {commit}",
-  builds_disabled: "Builds are temporarily disabled by the admin.",
+  builds_disabled: "Builds are temporarily disabled during ongoing maintenance, check back later.",
   meta_defconfig: "defconfig",
   meta_build_id: "build id",
   deduped_note: "reused an existing identical image",

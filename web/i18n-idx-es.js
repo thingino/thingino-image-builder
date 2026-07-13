@@ -22,7 +22,7 @@ I18N.add("es", {
   stats_queued: "en cola",
   stats_typical: "compilación típica",
   commit_badge_text: "{branch} @ {commit}",
-  builds_disabled: "El administrador ha desactivado las compilaciones temporalmente.",
+  builds_disabled: "Las compilaciones están desactivadas temporalmente por mantenimiento en curso, vuelve más tarde.",
   meta_defconfig: "defconfig",
   meta_build_id: "id de compilación",
   deduped_note: "se reutilizó una imagen idéntica existente",

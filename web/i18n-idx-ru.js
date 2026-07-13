@@ -22,7 +22,7 @@ I18N.add("ru", {
   stats_queued: "в очереди",
   stats_typical: "обычная сборка",
   commit_badge_text: "{branch} @ {commit}",
-  builds_disabled: "Сборки временно отключены администратором.",
+  builds_disabled: "Сборки временно отключены на время технического обслуживания, загляните позже.",
   meta_defconfig: "defconfig",
   meta_build_id: "ID сборки",
   deduped_note: "повторно использован существующий идентичный образ",

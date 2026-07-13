@@ -22,7 +22,7 @@ I18N.add("nl", {
   stats_queued: "in wachtrij",
   stats_typical: "typische build",
   commit_badge_text: "{branch} @ {commit}",
-  builds_disabled: "Builds zijn tijdelijk uitgeschakeld door de beheerder.",
+  builds_disabled: "Builds zijn tijdelijk uitgeschakeld wegens lopend onderhoud, kom later terug.",
   meta_defconfig: "defconfig",
   meta_build_id: "build-id",
   deduped_note: "bestaande identieke image hergebruikt",

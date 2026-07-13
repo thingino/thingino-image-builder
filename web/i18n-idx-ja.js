@@ -22,7 +22,7 @@ I18N.add("ja", {
   stats_queued: "待機中",
   stats_typical: "標準ビルド時間",
   commit_badge_text: "{branch} @ {commit}",
-  builds_disabled: "ビルドは管理者により一時的に無効化されています。",
+  builds_disabled: "メンテナンス中のためビルドは一時的に無効になっています。後ほどご確認ください。",
   meta_defconfig: "defconfig",
   meta_build_id: "ビルドID",
   deduped_note: "既存の同一イメージを再利用しました",

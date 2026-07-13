@@ -888,7 +888,7 @@ async fn post_build(
     let position: i64 = {
         let conn = st.db.lock();
         if !builds_enabled(&conn) {
-            return json_uid(StatusCode::SERVICE_UNAVAILABLE, &uid, json!({"error": "builds are temporarily disabled"}));
+            return json_uid(StatusCode::SERVICE_UNAVAILABLE, &uid, json!({"error": "builds are temporarily disabled during maintenance, check back later"}));
         }
         let lim = effective_limits(&conn, &st.cfg);
         // Hourly window, but never count builds created before an admin "reset limits".

@@ -22,7 +22,7 @@ I18N.add("uk", {
   stats_queued: "у черзі",
   stats_typical: "звичайна збірка",
   commit_badge_text: "{branch} @ {commit}",
-  builds_disabled: "Збірки тимчасово вимкнено адміністратором.",
+  builds_disabled: "Збірки тимчасово вимкнено на час технічного обслуговування, завітайте пізніше.",
   meta_defconfig: "defconfig",
   meta_build_id: "ID збірки",
   deduped_note: "повторно використано наявний ідентичний образ",

@@ -243,7 +243,7 @@ async function handleBuild(request, env) {
   const cutoff = Math.max(ts - WINDOW, resetTs);
 
   if ((await getSetting(env, "builds_enabled")) === "0")
-    return json({ error: "builds are temporarily disabled" }, 503, env);
+    return json({ error: "builds are temporarily disabled during maintenance, check back later" }, 503, env);
 
   // Dedup: identical (defconfig, commit) in flight or done within retention.
   if (commit) {

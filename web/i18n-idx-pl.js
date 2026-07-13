@@ -22,7 +22,7 @@ I18N.add("pl", {
   stats_queued: "w kolejce",
   stats_typical: "typowa kompilacja",
   commit_badge_text: "{branch} @ {commit}",
-  builds_disabled: "Kompilacje są tymczasowo wyłączone przez administratora.",
+  builds_disabled: "Kompilacje są tymczasowo wyłączone z powodu trwającej konserwacji, wróć później.",
   meta_defconfig: "defconfig",
   meta_build_id: "ID kompilacji",
   deduped_note: "ponownie użyto istniejącego identycznego obrazu",

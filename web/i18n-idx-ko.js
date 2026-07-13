@@ -22,7 +22,7 @@ I18N.add("ko", {
   stats_queued: "대기 중",
   stats_typical: "표준 빌드 시간",
   commit_badge_text: "{branch} @ {commit}",
-  builds_disabled: "빌드가 관리자에 의해 일시적으로 비활성화되었습니다.",
+  builds_disabled: "유지 보수 진행 중이라 빌드가 일시적으로 비활성화되었습니다. 나중에 다시 확인해 주세요.",
   meta_defconfig: "defconfig",
   meta_build_id: "빌드 ID",
   deduped_note: "기존의 동일한 이미지를 재사용했습니다",

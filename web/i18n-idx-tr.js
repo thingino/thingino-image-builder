@@ -22,7 +22,7 @@ I18N.add("tr", {
   stats_queued: "kuyrukta",
   stats_typical: "tipik derleme",
   commit_badge_text: "{branch} @ {commit}",
-  builds_disabled: "Derlemeler yönetici tarafından geçici olarak devre dışı bırakıldı.",
+  builds_disabled: "Devam eden bakım nedeniyle derlemeler geçici olarak devre dışı, lütfen daha sonra tekrar deneyin.",
   meta_defconfig: "defconfig",
   meta_build_id: "derleme kimliği",
   deduped_note: "mevcut özdeş bir imaj yeniden kullanıldı",

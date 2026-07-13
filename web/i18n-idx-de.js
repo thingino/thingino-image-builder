@@ -22,7 +22,7 @@ I18N.add("de", {
   stats_queued: "wartend",
   stats_typical: "typischer Build",
   commit_badge_text: "{branch} @ {commit}",
-  builds_disabled: "Builds sind vom Admin vorübergehend deaktiviert.",
+  builds_disabled: "Builds sind wegen laufender Wartung vorübergehend deaktiviert, bitte schau später wieder vorbei.",
   meta_defconfig: "defconfig",
   meta_build_id: "Build-ID",
   deduped_note: "vorhandenes identisches Image wiederverwendet",

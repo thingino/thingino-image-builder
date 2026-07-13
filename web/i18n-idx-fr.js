@@ -22,7 +22,7 @@ I18N.add("fr", {
   stats_queued: "en file",
   stats_typical: "génération type",
   commit_badge_text: "{branch} @ {commit}",
-  builds_disabled: "Les générations sont temporairement désactivées par l'administrateur.",
+  builds_disabled: "Les générations sont temporairement désactivées pendant une maintenance en cours, revenez plus tard.",
   meta_defconfig: "defconfig",
   meta_build_id: "id de génération",
   deduped_note: "réutilisation d'une image identique existante",
