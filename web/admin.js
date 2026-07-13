@@ -188,4 +188,7 @@ window.addEventListener('i18nchange',function(){
 const inviteParam=new URLSearchParams(location.search).get('invite');
 if(inviteParam){ startEnroll(inviteParam); }
 else if(tok()){ adminGet().then(show).catch(e=>{ if(e&&e.auth) localStorage.removeItem(TK); else show(); }); }
-setInterval(()=>{ if($('app').style.display!=='none') refresh(); },5000);
+// Poll gently: 10s, and not at all while the tab is hidden (idle background admin tabs
+// were burning the free request quota); refresh immediately when the tab comes back.
+setInterval(()=>{ if(document.hidden) return; if($('app').style.display!=='none') refresh(); },10000);
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden&&$('app').style.display!=='none') refresh(); });

@@ -91,9 +91,14 @@
     if(ok&&data){ maxConc=data.max_concurrent||6; avgSecs=data.avg_build_secs; userHourly=data.user_hourly||userHourly; if(data.retention_secs) retentionMins=Math.max(1,Math.round(data.retention_secs/60)); renderGlobal(data);
       if(!myId && data.you){ setMy(data.you.build_id); } }
     if(myId){
-      const s=await api('/api/status/'+myId);
-      if(s.status===404){ setMy(null); you=null; renderYou(); }
-      else if(s.ok&&s.data&&s.data.state){ you=s.data; youAt=Date.now(); renderYou(); }
+      // Poll status only while it can still change (active, or done and awaiting expiry).
+      // Terminal failed/cancelled/expired builds render from cache; polling them for days
+      // was a big chunk of the free-tier request burn.
+      if(!you || ACTIVE.has(you.state) || you.state==='done'){
+        const s=await api('/api/status/'+myId);
+        if(s.status===404){ setMy(null); you=null; renderYou(); }
+        else if(s.ok&&s.data&&s.data.state){ you=s.data; youAt=Date.now(); renderYou(); }
+      }
     } else { you=null; renderYou(); }
   }
 
@@ -176,5 +181,9 @@
   I18N.apply(); renderFooterLimits(); I18N.selector('lang-slot'); applyHelpMode();
   window.addEventListener('i18nchange',()=>{ I18N.apply(); renderFooterLimits(); validate(); renderYou(); refresh(); applyHelpMode(); });
   loadBoards(); refresh();
-  setInterval(refresh, 5000);
-  setInterval(()=>{ if(you&&you.state==='running') renderYou(); }, 1000);
+  // Poll gently: 5s only while your own build is active, 15s otherwise, and not at all
+  // while the tab is hidden (idle background tabs were burning the free request quota).
+  let tick=0;
+  setInterval(()=>{ if(document.hidden) return; tick++; if((you&&ACTIVE.has(you.state))||tick%3===0) refresh(); },5000);
+  document.addEventListener('visibilitychange',()=>{ if(!document.hidden) refresh(); });
+  setInterval(()=>{ if(!document.hidden&&you&&you.state==='running') renderYou(); }, 1000);
