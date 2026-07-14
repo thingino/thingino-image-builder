@@ -91,6 +91,20 @@ async function rlGuard(env, ip, max, period) {
   } catch { return true; }
 }
 
+// Per-isolate soft limiter for the cheap read endpoints: a Map in isolate memory,
+// zero external calls. Imperfect by design (per-PoP, resets on isolate eviction),
+// which is fine — reads are cheap and the D1 free read budget is 5M/day; the strict
+// Durable Object stays on /api/build where work is actually expensive.
+const RL_LOCAL = new Map(); // ip -> [windowStart, count]
+function softGuard(ip, max, period) {
+  const now = Date.now() / 1000;
+  if (RL_LOCAL.size > 4096) { for (const [k, v] of RL_LOCAL) if (now - v[0] >= period) RL_LOCAL.delete(k); }
+  let e = RL_LOCAL.get(ip);
+  if (!e || now - e[0] >= period) { e = [now, 0]; RL_LOCAL.set(ip, e); }
+  e[1]++;
+  return e[1] <= max;
+}
+
 // ---- D1 helpers -----------------------------------------------------------
 const countQ = async (env, sql, ...args) =>
   ((await env.DB.prepare(sql).bind(...args).first()) || { c: 0 }).c;
@@ -946,10 +960,13 @@ export default {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors(env) });
     const url = new URL(request.url), p = url.pathname;
     // Whole-API per-IP flood guard (except health), so no endpoint — not just
-    // /api/build — can burn the free-tier request/D1 budget (audit H1).
+    // /api/build — can burn the free-tier request/D1 budget (audit H1). This global
+    // guard is a per-isolate in-memory counter, NOT the Durable Object: a DO round-trip
+    // per read doubled our billable events (and a rejected request still counts toward
+    // the Workers daily limit anyway), so the exact DO check is reserved for /api/build.
     if (p.startsWith("/api/") && p !== "/api/health") {
       const gip = ipBucket(request.headers.get("CF-Connecting-IP") || "");
-      if (!(await rlGuard(env, gip, 90, 60))) return json({ error: "too many requests — slow down" }, 429, env);
+      if (!softGuard(gip, 90, 60)) return json({ error: "too many requests — slow down" }, 429, env);
     }
     try {
       if (p === "/api/health") return new Response("ok", { headers: cors(env) });
