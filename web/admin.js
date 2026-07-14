@@ -45,9 +45,13 @@ function show(){ $('gate').style.display='none'; $('app').style.display=''; refr
 async function logout(){ try{ await fetch(API+'/api/admin/logout',{method:'POST',headers:{Authorization:'Bearer '+tok()}}); }catch{} localStorage.removeItem(TK); location.reload(); }
 
 let enabled=true;
+let srvVer=null;
 async function refresh(){
   let d; try{ d=await adminGet(); }catch(e){ if(e&&e.auth){ logout(); } else if(e&&e.cap){ showCap(true); } return; }
   showCap(false);
+  // Version handshake: reload once when a deploy changes the server version, so open
+  // admin tabs stop running stale page code.
+  if(d.version){ if(srvVer===null) srvVer=d.version; else if(d.version!==srvVer){ location.reload(); return; } }
   enabled=d.builds_enabled;
   $('kill-state').innerHTML=enabled?'<span class="text-success">'+I18N.t('kill_enabled')+'</span>':'<span class="text-danger">'+I18N.t('kill_disabled')+'</span>';
   const kb=$('kill-btn'); kb.textContent=enabled?I18N.t('kill_disable'):I18N.t('kill_enable'); kb.className='btn btn-sm '+(enabled?'btn-outline-danger':'btn-thingino');

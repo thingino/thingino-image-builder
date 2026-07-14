@@ -101,10 +101,14 @@
     const a=$('again'); if(a) a.onclick=()=>{ setMy(null); you=null; renderYou(); $('board').focus(); };
   }
 
+  let srvVer=null;
   async function refresh(){
     const r=await api('/api/stats?ref='+encodeURIComponent(curRef));
     if(overCap(r)){ capacityBanner(); return; }
     const {ok,data}=r;
+    // Version handshake: when a deploy changes the server version, reload once so this
+    // tab picks up the new page code instead of polling on stale timers forever.
+    if(ok&&data&&data.version){ if(srvVer===null) srvVer=data.version; else if(data.version!==srvVer){ location.reload(); return; } }
     if(ok&&data){ maxConc=data.max_concurrent||6; avgSecs=data.avg_build_secs; userHourly=data.user_hourly||userHourly; if(data.retention_secs) retentionMins=Math.max(1,Math.round(data.retention_secs/60)); renderGlobal(data);
       if(!myId && data.you){ setMy(data.you.build_id); } }
     if(myId){

@@ -16,7 +16,21 @@
  * stale page. To retire it, deploy a sw.js whose fetch handler is empty.
  */
 self.addEventListener("install", () => self.skipWaiting());
-self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
+self.addEventListener("activate", (event) => {
+  event.waitUntil((async () => {
+    await self.clients.claim();
+    // Upgrade nudge: when a new sw.js version activates (browsers re-check it within
+    // ~24h even for idle tabs), reload HIDDEN controlled pages so long-lived background
+    // tabs pick up new page code (old tabs kept polling the API on stale timers).
+    // Visible tabs are never yanked; they upgrade on their own next reload.
+    const cs = await self.clients.matchAll({ type: "window" });
+    for (const c of cs) {
+      if (c.visibilityState === "hidden" && "navigate" in c) {
+        try { await c.navigate(c.url); } catch (_) { /* best effort */ }
+      }
+    }
+  })());
+});
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.mode === "navigate") {
