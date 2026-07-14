@@ -29,7 +29,7 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
       - name: Point the UI at the Worker
         run: |
-          echo "window.API_BASE='https://thingino-image-builder.gtxent.workers.dev';" > web/config.js
+          echo "window.API_BASE='https://thingino-image-builder-1d2e9b23.gtxent.workers.dev';" > web/config.js
           # Custom domain disabled for now (no DNS yet) — serves at thingino.github.io/<repo>/.
           # To enable image-builder.thingino.com later: add the CNAME DNS record, then
           #   echo "image-builder.thingino.com" > web/CNAME

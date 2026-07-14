@@ -1,5 +1,5 @@
 /*
- * Minimal service worker: keep the page shell + fixed-name scripts fresh on a normal
+ * Minimal service worker (r2): keep the page shell + fixed-name scripts fresh on a normal
  * reload, so a redeploy is picked up without a hard-reload. GitHub Pages serves
  * everything with cache-control: max-age=600, which otherwise sticks for ~10 minutes
  * and makes the no-store <meta> tags ineffective.
