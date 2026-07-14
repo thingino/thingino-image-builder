@@ -36,7 +36,10 @@ PAT. Otherwise it falls back to a static `GITHUB_TOKEN` PAT.
 The builder page carries a **Settings** gear that picks which thingino branch to build
 from: **master** (the default), **ciao**, or **stable**. The choice travels through the
 API as a `ref`: `GET /api/defconfigs?ref=<branch>`, `GET /api/stats?ref=<branch>`, and
-the `POST /api/build` body `{defconfig, ref}`. Both the Worker and the Rust broker
+the `POST /api/build` body `{defconfig, ref}`. `GET /api/stats` also accepts
+`my=<build_id>`, which embeds that build's status as `my_build` (the object
+`/api/status/<id>` would return, or `null` if unknown), so the page tracks its own
+build with one request per poll instead of two. Both the Worker and the Rust broker
 validate `ref` against a fixed allow-list (`master` / `ciao` / `stable`); anything else
 quietly falls back to `master`, so a caller can never coax an arbitrary-ref fetch out of
 GitHub. Each branch resolves its own thingino commit and camera (defconfig) list, cached

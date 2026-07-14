@@ -41,14 +41,31 @@
     b.classList.remove('d-none');
     $('board').disabled=true; $('go').disabled=true;
   }
-  async function loadBoards(){
+  // Camera lists are cached per branch, keyed by the branch commit (the list is derived
+  // from the commit, so the commit IS its version): instant render from cache, and
+  // /api/defconfigs is fetched only when stats reports a commit we haven't seen.
+  const DC_KEY=r=>'thingino_defconfigs:'+r;
+  let dcCommit=null;
+  function applyBoards(list){ list.sort(); allowed=new Set(list); $('boards').innerHTML=list.map(b=>`<option value="${esc(b)}">`).join(''); validate(); }
+  async function fetchBoards(commit){
     const r=await api('/api/defconfigs?ref='+encodeURIComponent(curRef));
     if(overCap(r)){ capacityBanner(); return; }
     const {ok,data}=r;
-    if(!ok||!Array.isArray(data)){ const h=$('hint'); h.textContent=I18N.t('cameras_load_failed'); h.className='form-text text-danger'; return; }
-    data.sort(); allowed=new Set(data);
-    $('boards').innerHTML=data.map(b=>`<option value="${esc(b)}">`).join('');
-    validate();
+    if(!ok||!Array.isArray(data)){ if(!allowed.size){ const h=$('hint'); h.textContent=I18N.t('cameras_load_failed'); h.className='form-text text-danger'; } return; }
+    applyBoards(data); dcCommit=commit;
+    try{ localStorage.setItem(DC_KEY(curRef),JSON.stringify({commit,list:data})); }catch(_){}
+  }
+  function noteCommit(c){
+    if(!c||dcCommit===c) return;
+    // A list fetched before we knew the commit belongs to it (same server-side cache).
+    if(dcCommit===null&&allowed.size){ dcCommit=c; try{ localStorage.setItem(DC_KEY(curRef),JSON.stringify({commit:c,list:[...allowed]})); }catch(_){} return; }
+    fetchBoards(c);
+  }
+  function loadBoards(){
+    allowed=new Set(); dcCommit=null;
+    let c=null; try{ c=JSON.parse(localStorage.getItem(DC_KEY(curRef))||'null'); }catch(_){}
+    if(c&&Array.isArray(c.list)&&c.list.length){ dcCommit=c.commit||null; applyBoards(c.list); }
+    else fetchBoards(null);
   }
 
   function renderGlobal(d){
@@ -101,27 +118,62 @@
     const a=$('again'); if(a) a.onclick=()=>{ setMy(null); you=null; renderYou(); $('board').focus(); };
   }
 
-  let srvVer=null;
-  async function refresh(){
-    const r=await api('/api/stats?ref='+encodeURIComponent(curRef));
-    if(overCap(r)){ capacityBanner(); return; }
-    const {ok,data}=r;
+  let srvVer=null, lastData=0, lastStatsData=null;
+  // One poller per browser: tabs share results over a BroadcastChannel, and a momentary
+  // Web Lock keeps two tabs from fetching at the same instant. Absent either API, tabs
+  // just poll independently like before.
+  const bc=('BroadcastChannel' in window)?new BroadcastChannel('thingino_stats'):null;
+
+  // Apply a stats payload (own fetch or another tab's broadcast) to this tab's UI.
+  function consume(data, askedMy){
+    lastData=Date.now(); lastStatsData=data;
     // Version handshake: when a deploy changes the server version, reload once so this
     // tab picks up the new page code instead of polling on stale timers forever.
-    if(ok&&data&&data.version){ if(srvVer===null) srvVer=data.version; else if(data.version!==srvVer){ location.reload(); return; } }
-    if(ok&&data){ maxConc=data.max_concurrent||6; avgSecs=data.avg_build_secs; userHourly=data.user_hourly||userHourly; if(data.retention_secs) retentionMins=Math.max(1,Math.round(data.retention_secs/60)); renderGlobal(data);
-      if(!myId && data.you){ setMy(data.you.build_id); } }
-    if(myId){
-      // Poll status only while it can still change (active, or done and awaiting expiry).
-      // Terminal failed/cancelled/expired builds render from cache; polling them for days
-      // was a big chunk of the free-tier request burn.
-      if(!you || ACTIVE.has(you.state) || you.state==='done'){
-        const s=await api('/api/status/'+myId);
-        if(s.status===404){ setMy(null); you=null; renderYou(); }
-        else if(s.ok&&s.data&&s.data.state){ you=s.data; youAt=Date.now(); renderYou(); }
-      }
-    } else { you=null; renderYou(); }
+    if(data.version){ if(srvVer===null) srvVer=data.version; else if(data.version!==srvVer){ location.reload(); return; } }
+    maxConc=data.max_concurrent||6; avgSecs=data.avg_build_secs; userHourly=data.user_hourly||userHourly;
+    if(data.retention_secs) retentionMins=Math.max(1,Math.round(data.retention_secs/60));
+    renderGlobal(data); noteCommit(data.commit);
+    if(!myId && data.you){ setMy(data.you.build_id); }
+    // Embedded status of our tracked build (only trust it if it was asked for us).
+    if(askedMy && askedMy===myId && 'my_build' in data){
+      if(data.my_build===null){ setMy(null); you=null; renderYou(); }
+      else { you=data.my_build; youAt=Date.now(); renderYou(); }
+    }
   }
+
+  async function doFetch(){
+    // Track our build only while it can still change (active, or done awaiting expiry);
+    // its status rides along on the stats request (?my=), one request instead of two.
+    const wantMy=(myId && (!you || ACTIVE.has(you.state) || you.state==='done'))?myId:null;
+    const r=await api('/api/stats?ref='+encodeURIComponent(curRef)+(wantMy?'&my='+encodeURIComponent(wantMy):''));
+    if(overCap(r)){ capacityBanner(); return; }
+    const {ok,data}=r;
+    if(!ok||!data) return;
+    consume(data, wantMy);
+    if(wantMy && !('my_build' in data)){
+      // Older broker without ?my support: fall back to the separate status poll.
+      const s=await api('/api/status/'+wantMy);
+      if(s.status===404){ setMy(null); you=null; renderYou(); }
+      else if(s.ok&&s.data&&s.data.state){ you=s.data; youAt=Date.now(); renderYou(); }
+    }
+    if(!myId&&you){ you=null; renderYou(); }
+    if(bc) bc.postMessage({ref:curRef,my:wantMy,data});
+  }
+
+  async function refresh(force){
+    if(force){ await doFetch(); return; } // user action: never skipped, never lock-dropped
+    // Skip if this browser already has fresh-enough data (typically another tab's).
+    const need=(you&&ACTIVE.has(you.state))?4000:12500;
+    if(Date.now()-lastData<need) return;
+    if(navigator.locks){ await navigator.locks.request('thingino_poll',{ifAvailable:true},async l=>{ if(l) await doFetch(); }); }
+    else await doFetch();
+  }
+
+  if(bc) bc.onmessage=e=>{
+    const m=e.data||{};
+    if(m.ref!==curRef||!m.data) return;
+    consume(m.data, (m.my&&m.my===myId)?m.my:null);
+  };
 
   async function submit(){
     const defconfig=$('board').value.trim();
@@ -131,7 +183,7 @@
     if(!ok){ const h=$('hint'); h.textContent=(data&&data.error)||I18N.t('request_failed',{status}); h.className='form-text text-danger'; $('go').disabled=false; return; }
     setMy(data.build_id);
     you={build_id:data.build_id, defconfig:data.defconfig, state:data.state||'queued', position:data.position||0, elapsed_secs:0, download_url:data.download_url, deduped:data.deduped};
-    youAt=Date.now(); renderYou(); refresh();
+    youAt=Date.now(); renderYou(); refresh(true);
   }
 
   async function cancelBuild(){
@@ -139,7 +191,7 @@
     const b=$('cancel'); if(b){ b.disabled=true; b.textContent=I18N.t('state_cancelling'); }
     const {data}=await api(`/api/cancel/${you.build_id}`,{method:'POST'});
     if(data&&data.state){ you.state=(data.state==='cancelled')?'cancelled':'cancelling'; youAt=Date.now(); renderYou(); }
-    refresh();
+    refresh(true);
   }
 
   /* ---- Opt-in help balloons (? button / Settings toggle; off by default) ---- */
@@ -196,15 +248,24 @@
   $('settings-btn').addEventListener('click',openSettings);
   $('settings-close').addEventListener('click',closeSettings);
   $('settings-overlay').addEventListener('click',e=>{ if(e.target===$('settings-overlay')) closeSettings(); });
-  document.querySelectorAll('.branch-radio').forEach(r=>r.addEventListener('change',()=>{ if(r.checked&&REFS.includes(r.value)){ curRef=r.value; localStorage.setItem(REF_KEY,curRef); loadBoards(); refresh(); } }));
+  document.querySelectorAll('.branch-radio').forEach(r=>r.addEventListener('change',()=>{ if(r.checked&&REFS.includes(r.value)){ curRef=r.value; localStorage.setItem(REF_KEY,curRef); loadBoards(); wake(true); } }));
   $('btn-help').addEventListener('click',()=>setHelp(!helpMode));
   $('setting-help').addEventListener('change',e=>setHelp(e.target.checked));
   I18N.apply(); renderFooterLimits(); I18N.selector('lang-slot'); applyHelpMode();
-  window.addEventListener('i18nchange',()=>{ I18N.apply(); renderFooterLimits(); validate(); renderYou(); refresh(); applyHelpMode(); });
-  loadBoards(); refresh();
-  // Poll gently: 5s only while your own build is active, 15s otherwise, and not at all
-  // while the tab is hidden (idle background tabs were burning the free request quota).
-  let tick=0;
-  setInterval(()=>{ if(document.hidden) return; tick++; if((you&&ACTIVE.has(you.state))||tick%3===0) refresh(); },5000);
-  document.addEventListener('visibilitychange',()=>{ if(!document.hidden) refresh(); });
+  window.addEventListener('i18nchange',()=>{ I18N.apply(); renderFooterLimits(); validate(); renderYou(); if(lastStatsData) renderGlobal(lastStatsData); applyHelpMode(); });
+  loadBoards(); refresh(true);
+  // Poll gently: 5s while your own build is active; idle backs off 15s -> 30s -> 60s;
+  // nothing at all while the tab is hidden. wake() snaps back to the fast cadence on
+  // user activity (typing, branch switch, tab becoming visible).
+  let wait=1, idleLvl=0;
+  function wake(now){ idleLvl=0; wait=Math.min(wait,3); if(now&&!document.hidden) refresh(true); }
+  setInterval(()=>{
+    if(document.hidden) return;
+    if(you&&ACTIVE.has(you.state)){ idleLvl=0; wait=1; refresh(); return; }
+    if(--wait>0) return;
+    refresh();
+    idleLvl=Math.min(idleLvl+1,2); wait=[3,6,12][idleLvl];
+  },5000);
+  document.addEventListener('visibilitychange',()=>{ if(!document.hidden){ wake(false); refresh(); } });
+  $('board').addEventListener('input',()=>wake(false));
   setInterval(()=>{ if(!document.hidden&&you&&you.state==='running') renderYou(); }, 1000);

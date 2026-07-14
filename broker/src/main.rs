@@ -803,10 +803,13 @@ async fn shutdown_signal() {
 
 /// `?ref=<branch>` query param (defconfigs + stats). Absent/empty/unknown is validated
 /// down to "master" by `resolve_thingino`, so it's safe to forward verbatim.
+/// `?my=<build_id>` (stats only): embed that build's status as `my_build`.
 #[derive(Deserialize)]
 struct RefQuery {
     #[serde(rename = "ref", default)]
     req_ref: String,
+    #[serde(default)]
+    my: String,
 }
 
 async fn get_defconfigs(State(st): State<AppState>, Query(q): Query<RefQuery>) -> Response {
@@ -831,24 +834,31 @@ async fn get_stats(State(st): State<AppState>, Query(q): Query<RefQuery>, header
         .optional().ok().flatten();
     let you = latest_user_build(&conn, &st.cfg, &uid, now_ts);
     let enabled = builds_enabled(&conn);
+    // Embedded status of the caller's tracked build (?my=<id>), so the page needs one
+    // request per poll instead of stats + status. JSON null = unknown/expired-and-purged.
+    let my_build = if q.my.is_empty() {
+        None
+    } else {
+        Some(status_payload(&conn, &st.cfg, &q.my).unwrap_or(serde_json::Value::Null))
+    };
     drop(conn);
-    json_uid(
-        StatusCode::OK,
-        &uid,
-        json!({
-            "running": running,
-            "queued": queued,
-            "max_concurrent": lim.max_concurrent,
-            "user_hourly": lim.user_hourly,
-            "retention_secs": lim.retention,
-            "avg_build_secs": avg.map(|v| v.round() as i64),
-            "builds_enabled": enabled,
-            "commit": commit,
-            "version": version_string(),
-            "you": you,
-            "uid": uid,
-        }),
-    )
+    let mut body = json!({
+        "running": running,
+        "queued": queued,
+        "max_concurrent": lim.max_concurrent,
+        "user_hourly": lim.user_hourly,
+        "retention_secs": lim.retention,
+        "avg_build_secs": avg.map(|v| v.round() as i64),
+        "builds_enabled": enabled,
+        "commit": commit,
+        "version": version_string(),
+        "you": you,
+        "uid": uid,
+    });
+    if let Some(mb) = my_build {
+        body["my_build"] = mb;
+    }
+    json_uid(StatusCode::OK, &uid, body)
 }
 
 #[derive(Deserialize)]
@@ -974,22 +984,21 @@ async fn post_build(
     )
 }
 
-async fn get_status(State(st): State<AppState>, Path(build_id): Path<String>) -> Response {
-    if !valid_build_id(&build_id) {
-        return json_err(StatusCode::BAD_REQUEST, "bad build_id");
+/// One build's public status object, shared by /api/status/<id> and /api/stats?my=<id>
+/// (the page piggybacks its own build's status onto the stats poll: one request instead
+/// of two). Returns None for an invalid or unknown id. Mirrors the Worker's statusPayload.
+fn status_payload(conn: &Connection, cfg: &Config, id: &str) -> Option<serde_json::Value> {
+    if !valid_build_id(id) {
+        return None;
     }
-    let now_ts = now();
-    let conn = st.db.lock();
-    let row = conn
+    let (defconfig, real_state, created_ts, dispatched_ts, finished_ts, cancel_req) = conn
         .query_row(
             "SELECT defconfig, state, created_ts, dispatched_ts, finished_ts, cancel_requested FROM builds WHERE id=?1",
-            [&build_id],
+            [id],
             |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?, r.get::<_, Option<i64>>(3)?, r.get::<_, Option<i64>>(4)?, r.get::<_, i64>(5)?)),
         )
-        .optional().ok().flatten();
-    let Some((defconfig, real_state, created_ts, dispatched_ts, finished_ts, cancel_req)) = row else {
-        return json_err(StatusCode::NOT_FOUND, "unknown build");
-    };
+        .optional().ok().flatten()?;
+    let now_ts = now();
     // A running build with a pending cancel surfaces as "cancelling" — persisted via
     // cancel_requested, so it survives reloads until the run actually stops.
     let state = if real_state == "running" && cancel_req != 0 { "cancelling".to_string() } else { real_state };
@@ -998,7 +1007,6 @@ async fn get_status(State(st): State<AppState>, Path(build_id): Path<String>) ->
     } else {
         0
     };
-    drop(conn);
     let elapsed = match state.as_str() {
         "running" | "cancelling" => dispatched_ts.map(|d| now_ts - d).unwrap_or(0),
         "queued" => now_ts - created_ts,
@@ -1008,16 +1016,29 @@ async fn get_status(State(st): State<AppState>, Path(build_id): Path<String>) ->
         },
     };
     let ready = state == "done";
-    Json(json!({
-        "build_id": build_id,
+    Some(json!({
+        "build_id": id,
         "defconfig": defconfig,
         "state": state,
         "ready": ready,
         "position": position,
         "elapsed_secs": elapsed,
-        "download_url": if ready { Some(asset_url(&st.cfg, &build_id)) } else { None },
+        "download_url": if ready { Some(asset_url(cfg, id)) } else { None },
     }))
-    .into_response()
+}
+
+async fn get_status(State(st): State<AppState>, Path(build_id): Path<String>) -> Response {
+    if !valid_build_id(&build_id) {
+        return json_err(StatusCode::BAD_REQUEST, "bad build_id");
+    }
+    let payload = {
+        let conn = st.db.lock();
+        status_payload(&conn, &st.cfg, &build_id)
+    };
+    match payload {
+        Some(p) => Json(p).into_response(),
+        None => json_err(StatusCode::NOT_FOUND, "unknown build"),
+    }
 }
 
 /// Shared cancel logic: queued → cancelled; running → set cancel_requested and try to

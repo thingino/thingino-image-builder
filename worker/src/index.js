@@ -219,7 +219,7 @@ async function handleDefconfigs(env, ref) {
   const { list } = await resolveThingino(env, ref);
   return json(list, 200, env);
 }
-async function handleStats(request, env, ref) {
+async function handleStats(request, env, ref, my) {
   const uid = resolveUid(request);
   const { commit } = await resolveThingino(env, ref);
   const cfg = await limits(env);
@@ -235,6 +235,9 @@ async function handleStats(request, env, ref) {
     commit,
     version: env.VERSION || "v0.1.0",
     uid,
+    // Embedded status of the caller's tracked build (?my=<id>), so the page needs one
+    // request per poll instead of stats + status. null = unknown/expired-and-purged.
+    ...(my ? { my_build: await statusPayload(env, my) } : {}),
   }, 200, env);
 }
 async function handleBuild(request, env) {
@@ -332,12 +335,15 @@ async function handleBuild(request, env) {
   if (state === "queued") position = await countQ(env, "SELECT count(*) c FROM builds WHERE state='queued'");
   return json({ build_id: id, defconfig, state, position, status_url: `/api/status/${id}`, download_url: assetUrl(env, id), commit }, 202, env);
 }
-async function handleStatus(id, env) {
-  if (!validBuildId(id)) return json({ error: "bad build_id" }, 400, env);
+// One build's public status object, shared by /api/status and /api/stats?my= (the
+// page piggybacks its own build's status on the stats poll: one request, not two).
+// Returns null for an invalid or unknown id.
+async function statusPayload(env, id) {
+  if (!validBuildId(id)) return null;
   const b = await env.DB.prepare(
     "SELECT defconfig,state,created_ts,dispatched_ts,finished_ts,cancel_requested FROM builds WHERE id=?"
   ).bind(id).first();
-  if (!b) return json({ error: "unknown build" }, 404, env);
+  if (!b) return null;
   const ts = nowSec();
   const state = b.state === "running" && b.cancel_requested ? "cancelling" : b.state;
   let position = 0;
@@ -348,7 +354,13 @@ async function handleStatus(id, env) {
   else if (state === "queued") elapsed = ts - b.created_ts;
   else if (b.finished_ts && b.dispatched_ts) elapsed = b.finished_ts - b.dispatched_ts;
   const ready = state === "done";
-  return json({ build_id: id, defconfig: b.defconfig, state, ready, position, elapsed_secs: elapsed, download_url: ready ? assetUrl(env, id) : null }, 200, env);
+  return { build_id: id, defconfig: b.defconfig, state, ready, position, elapsed_secs: elapsed, download_url: ready ? assetUrl(env, id) : null };
+}
+async function handleStatus(id, env) {
+  if (!validBuildId(id)) return json({ error: "bad build_id" }, 400, env);
+  const p = await statusPayload(env, id);
+  if (!p) return json({ error: "unknown build" }, 404, env);
+  return json(p, 200, env);
 }
 // Shared cancel: queued → cancelled; running → cancel_requested + stop the GitHub
 // run inline if we can find it (the cron retries otherwise). Returns the new state.
@@ -971,7 +983,7 @@ export default {
     try {
       if (p === "/api/health") return new Response("ok", { headers: cors(env) });
       if (p === "/api/defconfigs" && request.method === "GET") return await handleDefconfigs(env, url.searchParams.get("ref"));
-      if (p === "/api/stats" && request.method === "GET") return await handleStats(request, env, url.searchParams.get("ref"));
+      if (p === "/api/stats" && request.method === "GET") return await handleStats(request, env, url.searchParams.get("ref"), url.searchParams.get("my"));
       if (p === "/api/build" && request.method === "POST") return await handleBuild(request, env);
       let m;
       if ((m = p.match(/^\/api\/status\/(.+)$/)) && request.method === "GET") return await handleStatus(m[1], env);
