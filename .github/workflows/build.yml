@@ -246,13 +246,25 @@ jobs:
         run: |
           set -euo pipefail
           REPO="${{ github.repository }}"
+          # A transient API error on `view` looks identical to "release missing",
+          # so create is best-effort: if the tag already exists (422) that's fine.
+          # The upload below is the real gate and fails if the release is absent.
           if ! gh release view "$ROLLING_TAG" --repo "$REPO" >/dev/null 2>&1; then
             gh release create "$ROLLING_TAG" --repo "$REPO" --prerelease \
               --title "Image Builder images" \
-              --notes "Rolling pre-release. Each asset is a user-requested build named <build_id>.bin."
+              --notes "Rolling pre-release. Each asset is a user-requested build named <build_id>.bin." \
+              || echo "::warning::release create failed (tag likely already exists), continuing"
           fi
-          gh release upload "$ROLLING_TAG" \
-            "out/${BUILD_ID}.bin" "out/${BUILD_ID}.bin.sha256sum" --repo "$REPO" --clobber
+          # Retry the upload so a finished build survives an API blip.
+          for i in 1 2 3 4 5; do
+            if gh release upload "$ROLLING_TAG" \
+              "out/${BUILD_ID}.bin" "out/${BUILD_ID}.bin.sha256sum" --repo "$REPO" --clobber; then
+              break
+            fi
+            if [ "$i" -eq 5 ]; then echo "::error::upload failed after 5 attempts"; exit 1; fi
+            echo "upload attempt $i failed; retrying in $((i * 30))s"
+            sleep "$((i * 30))"
+          done
           URL="https://github.com/${REPO}/releases/download/${ROLLING_TAG}/${BUILD_ID}.bin"
           echo "Download: $URL"
           echo "- image: [\`${BUILD_ID}.bin\`](${URL})" >> "$GITHUB_STEP_SUMMARY"
