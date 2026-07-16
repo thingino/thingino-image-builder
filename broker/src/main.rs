@@ -685,6 +685,7 @@ async fn main() -> anyhow::Result<()> {
             ip_bucket TEXT NOT NULL,
             ip_full TEXT,
             defconfig TEXT NOT NULL,
+            ref TEXT,  -- thingino branch the build was requested from (master/ciao/stable; NULL = predates the column)
             state TEXT NOT NULL,
             run_id INTEGER,
             attempts INTEGER NOT NULL DEFAULT 0,
@@ -730,6 +731,7 @@ async fn main() -> anyhow::Result<()> {
     // Idempotent migrations for older DBs (swallow the "duplicate column" error on re-run).
     let _ = conn.execute("ALTER TABLE builds ADD COLUMN commit_sha TEXT", []);
     let _ = conn.execute("ALTER TABLE builds ADD COLUMN outcome TEXT", []);
+    let _ = conn.execute("ALTER TABLE builds ADD COLUMN ref TEXT", []);
     let _ = conn.execute("ALTER TABLE builds ADD COLUMN ip_full TEXT", []);
     let _ = conn.execute("ALTER TABLE events ADD COLUMN ip_full TEXT", []);
     let _ = conn.execute("ALTER TABLE admins ADD COLUMN privileges TEXT", []);
@@ -894,6 +896,7 @@ async fn post_build(
     // Resolve the pinned commit + defconfig list for the chosen branch; the build is then
     // dispatched/deduped against that branch's commit (stored per-build below, unchanged).
     let thingino = resolve_thingino(&st, &req.req_ref).await;
+    let git_ref = valid_ref(&req.req_ref);
     if !thingino.set.contains(&defconfig) {
         return json_err(StatusCode::BAD_REQUEST, "unknown defconfig");
     }
@@ -974,8 +977,8 @@ async fn post_build(
             return json_uid(StatusCode::TOO_MANY_REQUESTS, &uid, json!({"error": "too many builds from your network this hour — try again later"}));
         }
         if let Err(e) = conn.execute(
-            "INSERT INTO builds(id, uid, ip_bucket, ip_full, defconfig, state, created_ts, commit_sha) VALUES (?1,?2,?3,?4,?5,'queued',?6,?7)",
-            rusqlite::params![build_id, uid, ip, ip_full, defconfig, now_ts, commit],
+            "INSERT INTO builds(id, uid, ip_bucket, ip_full, defconfig, state, created_ts, commit_sha, ref) VALUES (?1,?2,?3,?4,?5,'queued',?6,?7,?8)",
+            rusqlite::params![build_id, uid, ip, ip_full, defconfig, now_ts, commit, git_ref],
         ) {
             tracing::error!("insert failed: {e}");
             return json_err(StatusCode::INTERNAL_SERVER_ERROR, "internal error");
@@ -1839,7 +1842,7 @@ fn latest_user_build(conn: &Connection, cfg: &Config, uid: &str, now_ts: i64) ->
 
 fn query_recent_builds(conn: &Connection, limit: i64) -> Vec<serde_json::Value> {
     let Ok(mut stmt) = conn.prepare(
-        "SELECT id, defconfig, state, created_ts, dispatched_ts, finished_ts, run_id, cancel_requested, uid, ip_bucket, ip_full, outcome FROM builds ORDER BY created_ts DESC LIMIT ?1",
+        "SELECT id, defconfig, state, created_ts, dispatched_ts, finished_ts, run_id, cancel_requested, uid, ip_bucket, ip_full, outcome, ref FROM builds ORDER BY created_ts DESC LIMIT ?1",
     ) else {
         return vec![];
     };
@@ -1856,6 +1859,7 @@ fn query_recent_builds(conn: &Connection, limit: i64) -> Vec<serde_json::Value> 
             "defconfig": r.get::<_, String>(1)?,
             "state": state,
             "outcome": r.get::<_, Option<String>>(11)?,
+            "ref": r.get::<_, Option<String>>(12)?,
             "created_ts": r.get::<_, i64>(3)?,
             "dispatched_ts": r.get::<_, Option<i64>>(4)?,
             "finished_ts": r.get::<_, Option<i64>>(5)?,
