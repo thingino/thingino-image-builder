@@ -245,10 +245,15 @@
   $('go').addEventListener('click',submit);
   function openSettings(){ const r=$('branch-'+curRef); if(r) r.checked=true; $('settings-overlay').classList.remove('d-none'); }
   function closeSettings(){ $('settings-overlay').classList.add('d-none'); }
+  function saveSettings(){
+    const sel=document.querySelector('.branch-radio:checked');
+    if(sel&&REFS.includes(sel.value)&&sel.value!==curRef){ curRef=sel.value; localStorage.setItem(REF_KEY,curRef); loadBoards(); wake(true); }
+    closeSettings();
+  }
   $('settings-btn').addEventListener('click',openSettings);
-  $('settings-close').addEventListener('click',closeSettings);
+  $('settings-cancel').addEventListener('click',closeSettings);
+  $('settings-save').addEventListener('click',saveSettings);
   $('settings-overlay').addEventListener('click',e=>{ if(e.target===$('settings-overlay')) closeSettings(); });
-  document.querySelectorAll('.branch-radio').forEach(r=>r.addEventListener('change',()=>{ if(r.checked&&REFS.includes(r.value)){ curRef=r.value; localStorage.setItem(REF_KEY,curRef); loadBoards(); wake(true); } }));
   $('btn-help').addEventListener('click',()=>setHelp(!helpMode));
   $('setting-help').addEventListener('change',e=>setHelp(e.target.checked));
   I18N.apply(); renderFooterLimits(); I18N.selector('lang-slot'); applyHelpMode();
