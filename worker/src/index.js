@@ -580,6 +580,11 @@ async function schedulerWork(env, ts) {
 }
 
 // ---- admin (TOTP 2FA + sessions in D1) ------------------------------------
+// Sliding inactivity timeout: any authenticated admin request refreshes the session;
+// one idle for this long is dropped. The 8h TTL set at login stays the absolute cap.
+// The admin page enforces the same window client-side on real user input, so its 10s
+// stats poll can't keep an abandoned-but-visible tab logged in forever (admin.js).
+const SESSION_IDLE_SECS = 2 * 3600;
 function ctEq(a, b) {
   if (a.length !== b.length) return false;
   let d = 0;
@@ -672,17 +677,20 @@ async function sessionAdmin(request, env) {
   const tok = bearer(request);
   if (!tok) return null;
   const t = nowSec();
-  await env.DB.prepare("DELETE FROM sessions WHERE expires <= ?").bind(t).run();
-  const r = await env.DB.prepare("SELECT admin,expires FROM sessions WHERE token=?").bind(tok).first();
+  await env.DB.prepare("DELETE FROM sessions WHERE expires <= ? OR last_active <= ?").bind(t, t - SESSION_IDLE_SECS).run();
+  const r = await env.DB.prepare("SELECT admin,expires,last_active FROM sessions WHERE token=?").bind(tok).first();
   // Fail closed: a null/empty stored admin must NOT default to "master" (master login
   // sets identity="master" explicitly, so the master path is unaffected).
-  if (!(r && r.expires > t && r.admin)) return null;
+  if (!(r && r.expires > t && r.last_active > t - SESSION_IDLE_SECS && r.admin)) return null;
   // Revocation is authoritative: a named admin's session is valid only while their
   // account still exists and isn't disabled (master is env-based, always valid).
   if (r.admin !== "master") {
     const a = await env.DB.prepare("SELECT disabled FROM admins WHERE username=?").bind(r.admin).first();
     if (!a || a.disabled) return null;
   }
+  // Slide the inactivity window; at most one write a minute so the admin page's
+  // 10s stats poll doesn't burn D1 writes.
+  if (t - r.last_active >= 60) await env.DB.prepare("UPDATE sessions SET last_active=? WHERE token=?").bind(t, tok).run();
   return r.admin;
 }
 // Does this admin identity hold a given privilege? The master always does (root); a
@@ -742,7 +750,7 @@ async function handleAdminLogin(request, env) {
     return json({ error: "invalid credentials" }, 401, env);
   }
   const session = uuid(), ttl = 8 * 3600;
-  await env.DB.prepare("INSERT INTO sessions(token,admin,expires) VALUES(?,?,?)").bind(session, identity, nowSec() + ttl).run();
+  await env.DB.prepare("INSERT INTO sessions(token,admin,expires,last_active) VALUES(?,?,?,?)").bind(session, identity, nowSec() + ttl, nowSec()).run();
   await logEvent(env, "admin_login_ok", null, null, ip, `session created (${identity})`, rawIp);
   return json({ session, expires_in: ttl, admin: identity, master: identity === "master" }, 200, env);
 }

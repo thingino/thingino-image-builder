@@ -38,7 +38,11 @@ CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
 -- Admin sessions (Workers are stateless, so sessions live in D1, not memory).
 -- admin = the identity that owns the session ("master" for the break-glass token, else a username).
-CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, admin TEXT, expires INTEGER NOT NULL);
+-- expires = absolute cap set at login; last_active drives the sliding inactivity timeout.
+-- Migrating a pre-last_active DB:
+--   ALTER TABLE sessions ADD COLUMN last_active INTEGER NOT NULL DEFAULT 0;
+--   UPDATE sessions SET last_active=strftime('%s','now');  -- keep live sessions alive
+CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, admin TEXT, expires INTEGER NOT NULL, last_active INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX IF NOT EXISTS idx_sessions_exp ON sessions(expires);
 
 -- Named admin users. The master token (a Worker secret) is separate + always works.
