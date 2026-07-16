@@ -1,11 +1,13 @@
 -- D1 schema for the Cloudflare Worker broker (mirrors the Rust/SQLite broker).
 -- Apply: wrangler d1 execute thingino-builder --file schema.sql   (add --remote to apply to prod)
+-- Migrating a pre-ref DB: ALTER TABLE builds ADD COLUMN ref TEXT;
 CREATE TABLE IF NOT EXISTS builds (
   id TEXT PRIMARY KEY,
   uid TEXT NOT NULL,
   ip_bucket TEXT NOT NULL,
   ip_full TEXT,
   defconfig TEXT NOT NULL,
+  ref TEXT,  -- thingino branch the build was requested from (master/ciao/stable; NULL = predates the column)
   state TEXT NOT NULL,
   run_id INTEGER,
   attempts INTEGER NOT NULL DEFAULT 0,

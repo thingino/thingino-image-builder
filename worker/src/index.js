@@ -250,7 +250,8 @@ async function handleBuild(request, env) {
   let body;
   try { body = await request.json(); } catch { return json({ error: "bad request" }, 400, env); }
   const defconfig = typeof body.defconfig === "string" ? body.defconfig.trim() : "";
-  const { commit, list } = await resolveThingino(env, body.ref);
+  const ref = normRef(body.ref);
+  const { commit, list } = await resolveThingino(env, ref);
   if (!list.includes(defconfig)) return json({ error: "unknown defconfig" }, 400, env);
 
   const uid = resolveUid(request);
@@ -290,13 +291,13 @@ async function handleBuild(request, env) {
   // INSERT, so a concurrent burst can't slip past separate check-then-insert reads.
   const id = uuid();
   const ins = await env.DB.prepare(
-    `INSERT INTO builds(id,uid,ip_bucket,ip_full,defconfig,state,created_ts,commit_sha)
-     SELECT ?,?,?,?,?,'queued',?,?
+    `INSERT INTO builds(id,uid,ip_bucket,ip_full,defconfig,state,created_ts,commit_sha,ref)
+     SELECT ?,?,?,?,?,'queued',?,?,?
      WHERE (SELECT count(*) FROM builds WHERE created_ts > ? AND ${notCancelledUndispatched}) < ?
        AND (SELECT count(*) FROM builds WHERE uid=? AND created_ts > ? AND ${notCancelledUndispatched}) < ?
        AND (SELECT count(*) FROM builds WHERE ip_bucket=? AND created_ts > ? AND ${notCancelledUndispatched}) < ?`
   ).bind(
-    id, uid, ip, rawIp, defconfig, ts, commit,
+    id, uid, ip, rawIp, defconfig, ts, commit, ref,
     cutoff, cfg.globalHourly,
     uid, cutoff, cfg.userHourly,
     ip, cutoff, cfg.ipHourly,
@@ -861,8 +862,8 @@ async function handleAdminStats(request, env) {
   for (const s of ["queued", "running", "done", "failed", "cancelled", "expired"])
     counts[s] = await countQ(env, "SELECT count(*) c FROM builds WHERE state=?", s);
   const avg = await env.DB.prepare("SELECT avg(finished_ts - dispatched_ts) a FROM builds WHERE (outcome='done' OR (outcome IS NULL AND state='done')) AND finished_ts IS NOT NULL AND dispatched_ts IS NOT NULL").first();
-  const builds = ((await env.DB.prepare("SELECT id,defconfig,state,outcome,created_ts,dispatched_ts,finished_ts,run_id,cancel_requested,uid,ip_bucket,ip_full FROM builds ORDER BY created_ts DESC LIMIT 25").all()).results || []).map((b) => ({
-    build_id: b.id, defconfig: b.defconfig,
+  const builds = ((await env.DB.prepare("SELECT id,defconfig,ref,state,outcome,created_ts,dispatched_ts,finished_ts,run_id,cancel_requested,uid,ip_bucket,ip_full FROM builds ORDER BY created_ts DESC LIMIT 25").all()).results || []).map((b) => ({
+    build_id: b.id, defconfig: b.defconfig, ref: b.ref,
     state: b.state === "running" && b.cancel_requested ? "cancelling" : b.state,
     outcome: b.outcome,
     created_ts: b.created_ts, dispatched_ts: b.dispatched_ts, finished_ts: b.finished_ts, run_id: b.run_id, uid: b.uid,
