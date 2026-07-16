@@ -121,6 +121,7 @@ I18N.add("uk", {
   recent_builds: "Останні збірки",
   th_build: "збірка",
   th_defconfig: "defconfig",
+  th_branch: "гілка",
   th_user: "користувач",
   th_ip: "IP",
   th_created: "створено",

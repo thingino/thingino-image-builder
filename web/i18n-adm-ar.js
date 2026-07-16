@@ -121,6 +121,7 @@ I18N.add("ar", {
   recent_builds: "عمليات البناء الأخيرة",
   th_build: "البناء",
   th_defconfig: "defconfig",
+  th_branch: "الفرع",
   th_user: "المستخدم",
   th_ip: "IP",
   th_created: "الإنشاء",

@@ -121,6 +121,7 @@ I18N.add("ru", {
   recent_builds: "Недавние сборки",
   th_build: "сборка",
   th_defconfig: "defconfig",
+  th_branch: "ветка",
   th_user: "пользователь",
   th_ip: "IP",
   th_created: "создано",

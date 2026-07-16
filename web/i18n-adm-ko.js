@@ -121,6 +121,7 @@ I18N.add("ko", {
   recent_builds: "최근 빌드",
   th_build: "빌드",
   th_defconfig: "defconfig",
+  th_branch: "브랜치",
   th_user: "사용자",
   th_ip: "IP",
   th_created: "생성 시각",

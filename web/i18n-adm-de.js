@@ -121,6 +121,7 @@ I18N.add("de", {
   recent_builds: "Letzte Builds",
   th_build: "Build",
   th_defconfig: "defconfig",
+  th_branch: "Branch",
   th_user: "Benutzer",
   th_ip: "IP",
   th_created: "erstellt",

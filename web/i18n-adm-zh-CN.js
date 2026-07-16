@@ -121,6 +121,7 @@ I18N.add("zh-CN", {
   recent_builds: "最近的构建",
   th_build: "构建",
   th_defconfig: "defconfig",
+  th_branch: "分支",
   th_user: "用户",
   th_ip: "IP",
   th_created: "创建时间",

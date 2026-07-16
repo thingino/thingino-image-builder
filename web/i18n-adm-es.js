@@ -121,6 +121,7 @@ I18N.add("es", {
   recent_builds: "Compilaciones recientes",
   th_build: "compilación",
   th_defconfig: "defconfig",
+  th_branch: "rama",
   th_user: "usuario",
   th_ip: "ip",
   th_created: "creada",

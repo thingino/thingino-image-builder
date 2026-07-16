@@ -121,6 +121,7 @@ I18N.add("tr", {
   recent_builds: "Son derlemeler",
   th_build: "derleme",
   th_defconfig: "defconfig",
+  th_branch: "dal",
   th_user: "kullanıcı",
   th_ip: "ip",
   th_created: "oluşturuldu",

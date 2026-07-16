@@ -121,6 +121,7 @@ I18N.add("fr", {
   recent_builds: "Générations récentes",
   th_build: "génération",
   th_defconfig: "defconfig",
+  th_branch: "branche",
   th_user: "utilisateur",
   th_ip: "ip",
   th_created: "créée",
