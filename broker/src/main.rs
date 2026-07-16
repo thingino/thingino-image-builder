@@ -48,6 +48,11 @@ const WINDOW_SECS: i64 = 3600;
 const DAY_SECS: i64 = 86400;
 const THINGINO_CACHE_SECS: i64 = 300; // trust a resolved commit/list this long
 const SESSION_TTL_SECS: i64 = 8 * 3600;
+// Sliding inactivity timeout: any authenticated admin request refreshes the session; one
+// idle for this long is dropped. SESSION_TTL_SECS stays the absolute cap. The admin page
+// enforces the same window client-side on real user input, so its 10s stats poll can't
+// keep an abandoned-but-visible tab logged in forever (admin.js).
+const SESSION_IDLE_SECS: i64 = 2 * 3600;
 const TOKEN_REFRESH_SECS: i64 = 3300; // re-mint the App token before its ~1h expiry
 const RELEASE_CACHE_SECS: i64 = 600;
 const EVENT_TTL_SECS: i64 = 7 * DAY_SECS; // prune audit events older than this
@@ -101,7 +106,8 @@ struct AppState {
     thingino: Arc<Mutex<std::collections::HashMap<String, Thingino>>>,
     fallback_list: Arc<Vec<String>>,
     fallback_set: Arc<HashSet<String>>,
-    sessions: Arc<Mutex<std::collections::HashMap<String, (String, i64)>>>,
+    // Admin sessions: token -> (identity, absolute expiry, last_active).
+    sessions: Arc<Mutex<std::collections::HashMap<String, (String, i64, i64)>>>,
     // Per-IP request throttle (audit F12): ip -> (window_start, count), in-memory.
     request_limiter: Arc<Mutex<std::collections::HashMap<String, (i64, u32)>>>,
     installation_token: Arc<Mutex<(Option<String>, i64)>>,
@@ -299,8 +305,17 @@ fn session_admin(headers: &HeaderMap, st: &AppState) -> Option<String> {
     let now_ts = now();
     let id = {
         let mut s = st.sessions.lock();
-        s.retain(|_, (_, exp)| *exp > now_ts);
-        s.get(tok).filter(|(id, exp)| *exp > now_ts && !id.is_empty()).map(|(id, _)| id.clone())
+        let idle_cutoff = now_ts - SESSION_IDLE_SECS;
+        s.retain(|_, (_, exp, last_active)| *exp > now_ts && *last_active > idle_cutoff);
+        // A surviving session is unexpired and non-idle; any authenticated request
+        // slides its inactivity window.
+        match s.get_mut(tok) {
+            Some((id, _, last_active)) if !id.is_empty() => {
+                *last_active = now_ts;
+                Some(id.clone())
+            }
+            _ => None,
+        }
     }?;
     // Revocation is authoritative: a named admin's session is valid only while their
     // account still exists and isn't disabled (master is env-based, always valid).
@@ -1223,7 +1238,7 @@ async fn admin_login(
     };
 
     let session = Uuid::new_v4().to_string();
-    st.sessions.lock().insert(session.clone(), (identity.clone(), now() + SESSION_TTL_SECS));
+    st.sessions.lock().insert(session.clone(), (identity.clone(), now() + SESSION_TTL_SECS, now()));
     {
         let conn = st.db.lock();
         log_event(&conn, "admin_login_ok", None, None, Some(&ip), &format!("session created ({identity})"), Some(&ip_full));
@@ -1623,7 +1638,7 @@ async fn admin_delete_user(State(st): State<AppState>, headers: HeaderMap, Path(
         log_event(&conn, "admin_user_deleted", None, None, None, &format!("deleted {u}"), None);
         n
     };
-    st.sessions.lock().retain(|_, (id, _)| id != &u);
+    st.sessions.lock().retain(|_, (id, _, _)| id != &u);
     Json(json!({ "ok": true, "deleted": deleted })).into_response()
 }
 
@@ -1652,7 +1667,7 @@ async fn admin_disable_user(State(st): State<AppState>, headers: HeaderMap, Path
         log_event(&conn, "admin_user_disabled", None, None, None, &format!("{} {}", if disabled { "disabled" } else { "enabled" }, u), None);
     }
     if disabled {
-        st.sessions.lock().retain(|_, (id, _)| id != &u);
+        st.sessions.lock().retain(|_, (id, _, _)| id != &u);
     }
     Json(json!({ "ok": true })).into_response()
 }
