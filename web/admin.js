@@ -44,6 +44,21 @@ async function login(){
 function show(){ $('gate').style.display='none'; $('app').style.display=''; refresh(); }
 async function logout(){ try{ await fetch(API+'/api/admin/logout',{method:'POST',headers:{Authorization:'Bearer '+tok()}}); }catch{} localStorage.removeItem(TK); location.reload(); }
 
+// Inactivity logout: 2h without real user input ends the session. The server enforces the
+// same window per-request on its side; this client check covers a visible tab, whose 10s
+// stats poll would otherwise keep the session alive forever. Last input is tracked in
+// localStorage (throttled), so activity in any tab counts for all tabs and survives reloads.
+const IDLE_MS=2*3600*1000, LA='thingino_admin_last_input';
+let laWrote=0;
+const touchIdle=()=>{ const t=Date.now(); if(t-laWrote>30000){ laWrote=t; try{ localStorage.setItem(LA,String(t)); }catch{} } };
+['pointerdown','keydown','wheel','touchstart'].forEach(e=>document.addEventListener(e,touchIdle,{passive:true,capture:true}));
+// True (and starts the logout) when the last user input is too old; a missing marker is
+// seeded to "now" instead of logging out, so pre-existing sessions get a full window.
+function idledOut(){ const la=parseInt(localStorage.getItem(LA)||'0',10);
+  if(!la){ touchIdle(); return false; }
+  if(Date.now()-la>IDLE_MS){ logout(); return true; }
+  return false; }
+
 let enabled=true;
 let srvVer=null;
 async function refresh(){
@@ -197,8 +212,8 @@ window.addEventListener('i18nchange',function(){
 });
 const inviteParam=new URLSearchParams(location.search).get('invite');
 if(inviteParam){ startEnroll(inviteParam); }
-else if(tok()){ adminGet().then(show).catch(e=>{ if(e&&e.auth) localStorage.removeItem(TK); else show(); }); }
+else if(tok()&&!idledOut()){ adminGet().then(show).catch(e=>{ if(e&&e.auth) localStorage.removeItem(TK); else show(); }); }
 // Poll gently: 10s, and not at all while the tab is hidden (idle background admin tabs
 // were burning the free request quota); refresh immediately when the tab comes back.
-setInterval(()=>{ if(document.hidden) return; if($('app').style.display!=='none') refresh(); },10000);
-document.addEventListener('visibilitychange',()=>{ if(!document.hidden&&$('app').style.display!=='none') refresh(); });
+setInterval(()=>{ if(document.hidden) return; if($('app').style.display!=='none'&&!idledOut()) refresh(); },10000);
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden&&$('app').style.display!=='none'&&!idledOut()) refresh(); });
