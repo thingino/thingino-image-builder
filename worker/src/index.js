@@ -685,6 +685,41 @@ function base32Encode(bytes) {
   return out;
 }
 const newTotpSecret = () => base32Encode(randBytes(20));
+// ---- TOTP secret sealing (AES-256-GCM, key = Worker secret TOTP_ENC_KEY) ----------
+// 2FA seeds used to sit in D1 as plaintext base32, so a database read could mint valid
+// codes and bypass the second factor entirely. Sealed rows are "enc1.<ivB64>.<ctB64>";
+// base32 has no dot, so legacy plaintext rows are unambiguous and keep working (each
+// re-seals on its owner's next successful login). With the key absent: plaintext rows
+// still verify and new secrets are written plaintext, so deploy order can't brick login;
+// sealed rows fail closed, because decrypting them needs the key by design.
+async function totpEncKey(env) {
+  if (!env.TOTP_ENC_KEY) return null;
+  let raw;
+  try { raw = b64ToBytes(env.TOTP_ENC_KEY); } catch { return null; }
+  if (raw.length !== 32) return null;
+  return crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt", "decrypt"]);
+}
+async function sealTotp(env, secretB32) {
+  const k = await totpEncKey(env);
+  if (!k) return secretB32;
+  const iv = randBytes(12);
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, k, new TextEncoder().encode(secretB32)));
+  return `enc1.${bytesToB64(iv)}.${bytesToB64(ct)}`;
+}
+// The stored secret back as plaintext base32, or null when it can't be recovered
+// (sealed row + missing/wrong key, or tampered ciphertext -> GCM auth failure).
+async function openTotp(env, stored) {
+  const s = String(stored || "");
+  if (!s.startsWith("enc1.")) return s || null;
+  const k = await totpEncKey(env);
+  if (!k) return null;
+  const [, ivB64, ctB64] = s.split(".");
+  if (!ivB64 || !ctB64) return null;
+  try {
+    const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64ToBytes(ivB64) }, k, b64ToBytes(ctB64));
+    return new TextDecoder().decode(pt);
+  } catch { return null; }
+}
 const bytesToB64 = (u8) => btoa(String.fromCharCode(...u8));
 const b64ToBytes = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 // Do NOT raise this on the Worker. One PBKDF2 verify at 100k already costs ~24ms, and the
@@ -715,13 +750,22 @@ const bearer = (request) => {
   const a = request.headers.get("authorization") || "";
   return a.startsWith("Bearer ") ? a.slice(7) : "";
 };
+// Sessions are stored as the hex SHA-256 of the bearer token, so D1 never holds a value
+// that opens an admin session and a database read can't replay one. The raw token exists
+// only in the login response and the admin's browser. (Deploying this invalidates rows
+// created before it: a presented token hashes to 64 hex chars and never matches a stored
+// raw uuid, so pre-change sessions just fail auth and the sweep deletes them at expiry.)
+const tokenHash = async (t) =>
+  [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(t)))]
+    .map((b) => b.toString(16).padStart(2, "0")).join("");
 // Returns the session's admin identity ("master" or a username), or null.
 async function sessionAdmin(request, env) {
   const tok = bearer(request);
   if (!tok) return null;
+  const th = await tokenHash(tok);
   const t = nowSec();
   await env.DB.prepare("DELETE FROM sessions WHERE expires <= ? OR last_active <= ?").bind(t, t - SESSION_IDLE_SECS).run();
-  const r = await env.DB.prepare("SELECT admin,expires,last_active FROM sessions WHERE token=?").bind(tok).first();
+  const r = await env.DB.prepare("SELECT admin,expires,last_active FROM sessions WHERE token=?").bind(th).first();
   // Fail closed: a null/empty stored admin must NOT default to "master" (master login
   // sets identity="master" explicitly, so the master path is unaffected).
   if (!(r && r.expires > t && r.last_active > t - SESSION_IDLE_SECS && r.admin)) return null;
@@ -733,7 +777,7 @@ async function sessionAdmin(request, env) {
   }
   // Slide the inactivity window; at most one write a minute so the admin page's
   // 10s stats poll doesn't burn D1 writes.
-  if (t - r.last_active >= 60) await env.DB.prepare("UPDATE sessions SET last_active=? WHERE token=?").bind(t, tok).run();
+  if (t - r.last_active >= 60) await env.DB.prepare("UPDATE sessions SET last_active=? WHERE token=?").bind(t, th).run();
   return r.admin;
 }
 // Does this admin identity hold a given privilege? The master always does (root); a
@@ -767,10 +811,15 @@ async function handleAdminLogin(request, env) {
     const pwOk = await verifyPassword(String(body.password || ""), usable ? a.pw_hash : DUMMY_PW_HASH);
     if (usable && pwOk) {
       // Single-use TOTP: the code's 30s step must be strictly newer than the last we accepted.
-      const step = await totpStep(a.totp_secret, totp);
+      const secret = await openTotp(env, a.totp_secret);
+      const step = secret ? await totpStep(secret, totp) : null;
       if (step !== null && step > (a.last_totp_step || 0)) {
         identity = u;
         await env.DB.prepare("UPDATE admins SET last_login=?, last_totp_step=? WHERE username=?").bind(nowSec(), step, u).run();
+        // Opportunistic seal: a plaintext legacy secret is re-written encrypted the first
+        // time its owner logs in after the key exists. One write, once per account.
+        if (env.TOTP_ENC_KEY && !String(a.totp_secret).startsWith("enc1."))
+          await env.DB.prepare("UPDATE admins SET totp_secret=? WHERE username=?").bind(await sealTotp(env, secret), u).run();
       }
     }
   } else if (env.ADMIN_TOKEN && env.ADMIN_TOTP_SECRET) {
@@ -793,13 +842,13 @@ async function handleAdminLogin(request, env) {
     return json({ error: "invalid credentials" }, 401, env);
   }
   const session = uuid(), ttl = 8 * 3600;
-  await env.DB.prepare("INSERT INTO sessions(token,admin,expires,last_active) VALUES(?,?,?,?)").bind(session, identity, nowSec() + ttl, nowSec()).run();
+  await env.DB.prepare("INSERT INTO sessions(token,admin,expires,last_active) VALUES(?,?,?,?)").bind(await tokenHash(session), identity, nowSec() + ttl, nowSec()).run();
   await logEvent(env, "admin_login_ok", null, null, ip, `session created (${identity})`, rawIp);
   return json({ session, expires_in: ttl, admin: identity, master: identity === "master" }, 200, env);
 }
 async function handleAdminLogout(request, env) {
   const tok = bearer(request);
-  if (tok) await env.DB.prepare("DELETE FROM sessions WHERE token=?").bind(tok).run();
+  if (tok) await env.DB.prepare("DELETE FROM sessions WHERE token=?").bind(await tokenHash(tok)).run();
   return json({ ok: true }, 200, env);
 }
 
@@ -816,7 +865,7 @@ async function handleAdminInvite(request, env) {
     return json({ error: "that username already exists" }, 409, env);
   const token = randToken(), secret = newTotpSecret(), exp = nowSec() + 60 * 60;
   await env.DB.prepare("INSERT INTO admins(username,totp_secret,invite_token,invite_expires,created_ts,created_by) VALUES(?,?,?,?,?,?)")
-    .bind(u, secret, token, exp, nowSec(), who).run();
+    .bind(u, await sealTotp(env, secret), token, exp, nowSec(), who).run();
   await logEvent(env, "admin_user_invited", null, null, null, `invited ${u}`);
   return json({ ok: true, username: u, invite_token: token, expires_in: 60 * 60 }, 200, env);
 }
@@ -877,7 +926,11 @@ async function handleGetInvite(token, env) {
   const a = await env.DB.prepare("SELECT username,totp_secret,invite_expires,pw_hash FROM admins WHERE invite_token=?").bind(token).first();
   if (!a || a.pw_hash) return json({ error: "invalid or already-used invite" }, 404, env);
   if (a.invite_expires <= nowSec()) return json({ error: "this invite has expired" }, 410, env);
-  return json({ username: a.username, secret: a.totp_secret, otpauth: inviteOtpauth(a.username, a.totp_secret) }, 200, env);
+  // The enrollee needs the plaintext seed once, to scan into their authenticator; this is
+  // the enrollment bootstrap and it is gated by the one-time invite token.
+  const secret = await openTotp(env, a.totp_secret);
+  if (!secret) return json({ error: "server key unavailable, ask the master admin" }, 500, env);
+  return json({ username: a.username, secret, otpauth: inviteOtpauth(a.username, secret) }, 200, env);
 }
 async function handleAcceptInvite(request, env) {
   let body; try { body = await request.json(); } catch { return json({ error: "bad request" }, 400, env); }
@@ -889,7 +942,9 @@ async function handleAcceptInvite(request, env) {
   // Validate the 2FA code, but do NOT consume the step here — enrollment isn't a login,
   // and advancing it would reject the user's immediate first login with the same code.
   // Single-use anti-replay applies from the first login onward (login advances the step).
-  if ((await totpStep(a.totp_secret, String(body.totp || "").trim())) === null)
+  const secret = await openTotp(env, a.totp_secret);
+  if (!secret) return json({ error: "server key unavailable, ask the master admin" }, 500, env);
+  if ((await totpStep(secret, String(body.totp || "").trim())) === null)
     return json({ error: "that 2FA code doesn't match — re-scan and try the next code" }, 401, env);
   await env.DB.prepare("UPDATE admins SET pw_hash=?, invite_token=NULL, invite_expires=NULL WHERE username=?")
     .bind(await hashPassword(pw), a.username).run();

@@ -39,6 +39,8 @@ CREATE INDEX IF NOT EXISTS idx_events_kind_ip_ts ON events(kind, ip_bucket, ts);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
 -- Admin sessions (Workers are stateless, so sessions live in D1, not memory).
+-- token = hex SHA-256 of the bearer token, NOT the token itself: a database read must not
+-- yield a value that opens an admin session. The raw token exists only client-side.
 -- admin = the identity that owns the session ("master" for the break-glass token, else a username).
 -- expires = absolute cap set at login; last_active drives the sliding inactivity timeout.
 -- Migrating a pre-last_active DB:
@@ -48,6 +50,8 @@ CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, admin TEXT, expires
 CREATE INDEX IF NOT EXISTS idx_sessions_exp ON sessions(expires);
 
 -- Named admin users. The master token (a Worker secret) is separate + always works.
+-- totp_secret = "enc1.<ivB64>.<ctB64>" (AES-256-GCM under the TOTP_ENC_KEY Worker secret),
+-- or legacy plaintext base32 that re-seals on the owner's next login once the key exists.
 -- pw_hash = "iters.saltB64.hashB64" (PBKDF2-SHA256); null until the invite is accepted.
 -- privileges = JSON array of granted privileged-action names (NULL/absent = none).
 -- last_totp_step = the 30s TOTP step last accepted (single-use anti-replay; null = none yet).
