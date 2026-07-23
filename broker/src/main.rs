@@ -80,6 +80,9 @@ struct Config {
     ip_header: Option<String>,
     admin_token: Option<String>,
     admin_totp_secret: Option<String>,
+    /// AES-256-GCM key (32 bytes) sealing admins.totp_secret at rest; absent = plaintext
+    /// legacy mode. See seal_totp/open_totp for the format and migration story.
+    totp_enc_key: Option<Vec<u8>>,
     update_marker: Option<String>,
 }
 
@@ -106,7 +109,9 @@ struct AppState {
     thingino: Arc<Mutex<std::collections::HashMap<String, Thingino>>>,
     fallback_list: Arc<Vec<String>>,
     fallback_set: Arc<HashSet<String>>,
-    // Admin sessions: token -> (identity, absolute expiry, last_active).
+    // Admin sessions: token -> (identity, absolute expiry, last_active). RAM only, never
+    // the SQLite file, so a copy of the DB can't replay sessions; that's why the Worker's
+    // hashed-token scheme has no analogue here (its sessions must live in D1).
     sessions: Arc<Mutex<std::collections::HashMap<String, (String, i64, i64)>>>,
     // Per-IP request throttle (audit F12): ip -> (window_start, count), in-memory.
     request_limiter: Arc<Mutex<std::collections::HashMap<String, (i64, u32)>>>,
@@ -493,6 +498,47 @@ fn new_totp_secret() -> String {
     base32_encode(&rand_bytes(20))
 }
 
+// ---- TOTP secret sealing (AES-256-GCM, key = TOTP_ENC_KEY env) --------------------
+// 2FA seeds used to sit in the SQLite file as plaintext base32, so anyone reading the DB
+// could mint valid codes and bypass the second factor. Sealed rows are
+// "enc1.<ivB64>.<ctB64>", byte-identical to the Worker's format (same key => the two
+// deployments can read each other's rows). base32 has no dot, so legacy plaintext stays
+// unambiguous and keeps working; each row re-seals on its owner's next successful login.
+// Key absent: plaintext keeps verifying and new secrets are written plaintext (deploy
+// order can't brick login); sealed rows fail closed, decrypting them needs the key.
+fn seal_totp(cfg: &Config, secret_b32: &str) -> String {
+    use aes_gcm::aead::Aead;
+    use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce};
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    let Some(key) = cfg.totp_enc_key.as_deref() else { return secret_b32.to_string() };
+    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
+    let iv = rand_bytes(12);
+    // Encrypt can only fail on absurd plaintext lengths; a 32-char base32 seed cannot.
+    let ct = cipher.encrypt(Nonce::from_slice(&iv), secret_b32.as_bytes()).expect("aes-gcm encrypt");
+    format!("enc1.{}.{}", STANDARD.encode(&iv), STANDARD.encode(&ct))
+}
+/// The stored secret back as plaintext base32, or None when it can't be recovered
+/// (sealed row + missing key, or tampered ciphertext => GCM auth failure).
+fn open_totp(cfg: &Config, stored: &str) -> Option<String> {
+    use aes_gcm::aead::Aead;
+    use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce};
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    if !stored.starts_with("enc1.") {
+        return if stored.is_empty() { None } else { Some(stored.to_string()) };
+    }
+    let key = cfg.totp_enc_key.as_deref()?;
+    let mut parts = stored.splitn(3, '.');
+    let (_, iv_b64, ct_b64) = (parts.next()?, parts.next()?, parts.next()?);
+    let iv = STANDARD.decode(iv_b64).ok()?;
+    let ct = STANDARD.decode(ct_b64).ok()?;
+    if iv.len() != 12 {
+        return None;
+    }
+    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
+    let pt = cipher.decrypt(Nonce::from_slice(&iv), ct.as_slice()).ok()?;
+    String::from_utf8(pt).ok()
+}
+
 // OWASP-recommended work factor for PBKDF2-HMAC-SHA256. This is the VPS broker, which has
 // no per-request CPU limit, so it can afford it. The Cloudflare Worker deliberately stays
 // at 100k: one verify there already costs ~24ms, right at the free plan's tolerated CPU
@@ -712,6 +758,16 @@ async fn main() -> anyhow::Result<()> {
         ip_header: std::env::var("IP_HEADER").ok().filter(|s| !s.is_empty()),
         admin_token: std::env::var("ADMIN_TOKEN").ok().filter(|s| !s.is_empty()),
         admin_totp_secret: std::env::var("ADMIN_TOTP_SECRET").ok().filter(|s| !s.is_empty()),
+        // Fail loud on a malformed key: silently continuing would mean silently unencrypted.
+        totp_enc_key: match std::env::var("TOTP_ENC_KEY").ok().filter(|s| !s.is_empty()) {
+            Some(b64) => {
+                use base64::{engine::general_purpose::STANDARD, Engine as _};
+                let raw = STANDARD.decode(b64.trim()).map_err(|e| anyhow::anyhow!("TOTP_ENC_KEY is not valid base64: {e}"))?;
+                anyhow::ensure!(raw.len() == 32, "TOTP_ENC_KEY must decode to 32 bytes (got {})", raw.len());
+                Some(raw)
+            }
+            None => None,
+        },
         update_marker: std::env::var("UPDATE_MARKER_PATH").ok().filter(|s| !s.is_empty()),
     };
     let bind_addr = env_or("BIND_ADDR", "[::]:8080");
@@ -1238,11 +1294,14 @@ async fn admin_login(
         let pw_ok = verify_password(&body.password, pw_hash);
         // Single-use TOTP: accept the code only if its 30s step is strictly newer than the
         // last one recorded for this admin (NULL → 0, so a fresh admin's first valid code
-        // passes). Carries the matched step so it can be persisted on success.
+        // passes). Carries the matched step so it can be persisted on success. The stored
+        // secret is unsealed first; a sealed row without the key yields None => login fails.
         let totp_match: Option<u64> = match &row {
-            Some((_, secret, _, last_step)) => {
+            Some((_, stored_secret, _, last_step)) => {
                 let last = last_step.unwrap_or(0);
-                totp_step(secret, totp).filter(|&step| (step as i64) > last)
+                open_totp(&st.cfg, stored_secret)
+                    .and_then(|secret| totp_step(&secret, totp))
+                    .filter(|&step| (step as i64) > last)
             }
             None => None,
         };
@@ -1259,6 +1318,16 @@ async fn admin_login(
                 if hash_iters(pw_hash) < PBKDF2_ITERS {
                     let rehashed = hash_password(&body.password);
                     conn.execute("UPDATE admins SET pw_hash=?2 WHERE username=?1", rusqlite::params![u, rehashed]).ok();
+                }
+                // Same idea for the 2FA seed: a plaintext legacy row is re-written sealed
+                // the first time its owner logs in after the key exists.
+                if let Some((_, stored_secret, _, _)) = &row {
+                    if st.cfg.totp_enc_key.is_some() && !stored_secret.starts_with("enc1.") {
+                        conn.execute(
+                            "UPDATE admins SET totp_secret=?2 WHERE username=?1",
+                            rusqlite::params![u, seal_totp(&st.cfg, stored_secret)],
+                        ).ok();
+                    }
                 }
                 Some(u)
             }
@@ -1708,7 +1777,7 @@ async fn admin_invite(State(st): State<AppState>, headers: HeaderMap, Json(body)
     if conn
         .execute(
             "INSERT INTO admins(username, totp_secret, invite_token, invite_expires, created_ts, created_by) VALUES (?1,?2,?3,?4,?5,?6)",
-            rusqlite::params![u, secret, token, exp, now(), identity],
+            rusqlite::params![u, seal_totp(&st.cfg, &secret), token, exp, now(), identity],
         )
         .is_err()
     {
@@ -1842,6 +1911,11 @@ async fn admin_get_invite(State(st): State<AppState>, Path(token): Path<String>)
     if invite_expires.unwrap_or(0) <= now() {
         return json_err(StatusCode::GONE, "this invite has expired");
     }
+    // The enrollee needs the plaintext seed once, to scan into their authenticator; this
+    // is the enrollment bootstrap and it is gated by the one-time invite token.
+    let Some(secret) = open_totp(&st.cfg, &secret) else {
+        return json_err(StatusCode::INTERNAL_SERVER_ERROR, "server key unavailable, ask the master admin");
+    };
     let otpauth = invite_otpauth(&username, &secret);
     Json(json!({ "username": username, "secret": secret, "otpauth": otpauth })).into_response()
 }
@@ -1882,6 +1956,9 @@ async fn admin_accept_invite(State(st): State<AppState>, Json(body): Json<Accept
     // Validate the 2FA code, but do NOT consume the step here — enrollment isn't a login, and
     // advancing it would reject the user's immediate first login with the same code. Single-use
     // anti-replay applies from the first login onward (login advances the step).
+    let Some(totp_secret) = open_totp(&st.cfg, &totp_secret) else {
+        return json_err(StatusCode::INTERNAL_SERVER_ERROR, "server key unavailable, ask the master admin");
+    };
     if totp_step(&totp_secret, body.totp.trim()).is_none() {
         return json_err(StatusCode::UNAUTHORIZED, "that 2FA code doesn't match — re-scan and try the next code");
     }
@@ -2586,5 +2663,63 @@ mod pbkdf2_tests {
         // The timing dummy must carry the current count too (enumeration guard).
         assert_eq!(hash_iters(DUMMY_PW_HASH), PBKDF2_ITERS, "dummy must track PBKDF2_ITERS");
         assert!(!verify_password("anything", DUMMY_PW_HASH), "dummy never matches");
+    }
+}
+
+#[cfg(test)]
+mod totp_seal_tests {
+    use super::*;
+    fn cfg_with_key(key: Option<Vec<u8>>) -> Config {
+        Config {
+            github_token: None,
+            github_app_id: None,
+            github_app_installation_id: None,
+            github_app_key: None,
+            app_mode: false,
+            github_repo: "x/y".into(),
+            thingino_repo: "x/y".into(),
+            rolling_tag: "t".into(),
+            per_user_hourly: 2, per_ip_hourly: 3, global_hourly: 20,
+            max_concurrent: 6, max_queue: 50,
+            retention_secs: 1800, failed_retention_secs: 28800, build_timeout_secs: 5400,
+            ip_header: None, admin_token: None, admin_totp_secret: None,
+            totp_enc_key: key, update_marker: None,
+        }
+    }
+    #[test]
+    fn seal_open_round_trip_and_failure_modes() {
+        let key = vec![9u8; 32];
+        let cfg = cfg_with_key(Some(key.clone()));
+        let nokey = cfg_with_key(None);
+        let secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
+
+        let sealed = seal_totp(&cfg, secret);
+        assert!(sealed.starts_with("enc1."), "sealed format");
+        assert_ne!(sealed, secret);
+        assert_eq!(open_totp(&cfg, &sealed).as_deref(), Some(secret), "round trip");
+        assert_ne!(seal_totp(&cfg, secret), sealed, "fresh iv per seal");
+
+        // fail closed
+        let wrong = cfg_with_key(Some(vec![7u8; 32]));
+        assert_eq!(open_totp(&wrong, &sealed), None, "wrong key");
+        assert_eq!(open_totp(&nokey, &sealed), None, "sealed without key");
+        let tampered = format!("{}AAAA", &sealed[..sealed.len() - 4]);
+        assert_eq!(open_totp(&cfg, &tampered), None, "tamper detected");
+
+        // legacy plaintext passes through either way; empty is None
+        assert_eq!(open_totp(&cfg, secret).as_deref(), Some(secret));
+        assert_eq!(open_totp(&nokey, secret).as_deref(), Some(secret));
+        assert_eq!(seal_totp(&nokey, secret), secret, "no key -> plaintext write");
+        assert_eq!(open_totp(&cfg, ""), None);
+    }
+    // Cross-backend parity: a row the Worker sealed must open here with the same key.
+    // (Format is enc1.<ivB64>.<ctB64>, AES-256-GCM; this fixture was produced by the
+    // Worker-side test harness with key bytes all-9.)
+    #[test]
+    fn opens_worker_sealed_fixture() {
+        let cfg = cfg_with_key(Some(vec![9u8; 32]));
+        let fixture = std::env::var("WORKER_SEALED_FIXTURE").unwrap_or_default();
+        if fixture.is_empty() { return; } // provided by the shell test driver
+        assert_eq!(open_totp(&cfg, &fixture).as_deref(), Some("JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"));
     }
 }

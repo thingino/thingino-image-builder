@@ -25,6 +25,7 @@ pbkdf2 = "0.12"
 sha2 = "0.10"
 base64 = "0.22"
 getrandom = "0.2"
+aes-gcm = "0.10"
 
 [profile.release]
 opt-level = "z"
