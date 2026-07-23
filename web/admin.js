@@ -11,6 +11,12 @@ function buildAction(b){ const id=esc(b.build_id);
   if(['queued','running','cancelling'].includes(b.state)) return ` <a href="#" class="bact text-danger ms-1" data-act="cancel" data-id="${id}" title="${esc(I18N.t('title_cancel_build'))}">✕</a>`;
   if(['done','failed'].includes(b.state)) return ` <a href="#" class="bact text-secondary small ms-1" data-act="expire" data-id="${id}" title="${esc(I18N.t('title_remove_artifact'))}">${I18N.t('act_remove')}</a>`;
   return ''; }
+// Run id, linked to its Actions run so a failed build is one click from its logs. The
+// repo comes from the API (config.js is rewritten at deploy time, so it can't hold it).
+// An expired build's run was deleted by the reaper, so that one stays plain text.
+let ghRepo=null;
+const runcell=(r,state)=>{ if(!r) return ''; const c=`<code>${esc(r)}</code>`;
+  return (ghRepo&&state!=='expired')?`<a href="https://github.com/${esc(ghRepo)}/actions/runs/${encodeURIComponent(r)}" target="_blank" rel="noopener">${c}</a>`:c; };
 const tfmt=ts=>new Date(ts*1000).toLocaleTimeString();
 const dur=(a,b)=>{ if(!a||!b) return '–'; const s=b-a; return `${Math.floor(s/60)}m${String(s%60).padStart(2,'0')}s`; };
 const ago=ts=>{ const s=Math.floor(Date.now()/1000)-ts; if(s<60)return I18N.t('ago_seconds',{n:s}); if(s<3600)return I18N.t('ago_minutes',{n:Math.floor(s/60)}); return I18N.t('ago_hours',{n:Math.floor(s/3600)}); };
@@ -68,6 +74,7 @@ async function refresh(){
   // admin tabs stop running stale page code.
   if(d.version){ if(srvVer===null) srvVer=d.version; else if(d.version!==srvVer){ location.reload(); return; } }
   enabled=d.builds_enabled;
+  ghRepo=d.repo||null;
   $('kill-state').innerHTML=enabled?'<span class="text-success">'+I18N.t('kill_enabled')+'</span>':'<span class="text-danger">'+I18N.t('kill_disabled')+'</span>';
   const kb=$('kill-btn'); kb.textContent=enabled?I18N.t('kill_disable'):I18N.t('kill_enable'); kb.className='btn btn-sm '+(enabled?'btn-outline-danger':'btn-thingino');
   $('kill-extra').textContent=I18N.t('kill_extra',{n:d.max_concurrent,m:Math.round(d.retention_secs/60)});
@@ -83,7 +90,7 @@ async function refresh(){
   isMaster=!!d.master; if(d.master||d.manage_users){ if(!usersShown){ $('users-card').style.display=''; usersShown=true; renderUsers(); } } else $('users-card').style.display='none';
   const c=d.counts||{};
   $('tiles').innerHTML=[['state_running',c.running],['state_queued',c.queued],['state_done',c.done],['state_failed',c.failed],['state_cancelled',c.cancelled],['state_expired',c.expired],['tile_24h',d.last24h],['tile_total_done',d.total_done??0],['tile_avg_build',d.avg_build_secs?Math.round(d.avg_build_secs/60)+'m':'–']].map(([k,n])=>tile(I18N.t(k),n)).join('');
-  $('builds-body').innerHTML=(d.recent_builds||[]).map(b=>`<tr><td><code>${esc(short(b.build_id))}</code></td><td>${esc(b.defconfig)}</td><td>${esc(b.ref||'–')}</td><td>${pill(b.state,b.outcome)}${buildAction(b)}</td><td><code>${esc(short(b.uid))}</code></td><td>${ipcell(b.ip,b.ip_bucket)}</td><td>${ago(b.created_ts)}</td><td>${dur(b.dispatched_ts,b.finished_ts)}</td><td><code>${esc(b.run_id)}</code></td></tr>`).join('');
+  $('builds-body').innerHTML=(d.recent_builds||[]).map(b=>`<tr><td><code>${esc(short(b.build_id))}</code></td><td>${esc(b.defconfig)}</td><td>${esc(b.ref||'–')}</td><td>${pill(b.state,b.outcome)}${buildAction(b)}</td><td><code>${esc(short(b.uid))}</code></td><td>${ipcell(b.ip,b.ip_bucket)}</td><td>${ago(b.created_ts)}</td><td>${dur(b.dispatched_ts,b.finished_ts)}</td><td>${runcell(b.run_id,b.state)}</td></tr>`).join('');
   $('events-body').innerHTML=(d.recent_events||[]).map(e=>`<tr><td>${tfmt(e.ts)}</td><td>${esc(e.kind)}</td><td><code>${esc(short(e.build_id))}</code></td><td><code>${esc(short(e.uid))}</code></td><td>${ipcell(e.ip,e.ip_bucket)}</td><td class="muted">${esc(e.detail)}</td></tr>`).join('');
   $('updated').textContent=I18N.t('updated',{t:new Date().toLocaleTimeString()});
 }
