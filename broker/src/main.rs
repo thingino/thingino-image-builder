@@ -1354,6 +1354,9 @@ async fn admin_stats(State(st): State<AppState>, headers: HeaderMap) -> Response
         "version": current,
         "latest_version": latest,
         "update_available": update_available,
+        // This backend self-updates (container swap via the update marker), so the admin
+        // keeps its version + update card. The Worker sets this false and footers the version.
+        "self_update": true,
         "limits": {
             "userHourly": lim.user_hourly,
             "ipHourly": lim.ip_hourly,

@@ -90,7 +90,10 @@
     <span class="small muted ms-auto" id="kill-extra"></span>
   </div></div>
 
-  <div class="card mb-3"><div class="card-body d-flex align-items-center gap-3 flex-wrap">
+  <!-- Version + self-update. Shown only on a backend that has self-update (the VPS broker);
+       on the Worker, which can't self-update, the card is hidden and the version drops to
+       the footer instead. admin.js toggles this on d.self_update. -->
+  <div class="card mb-3" id="version-card"><div class="card-body d-flex align-items-center gap-3 flex-wrap">
     <div><span data-i18n="version_label">Version</span> <code id="ver">…</code> <span id="upd-badge"></span></div>
     <button id="upd-btn" class="btn btn-sm btn-thingino" style="display:none" data-i18n="update_now">Update now</button>
     <span class="small muted ms-auto" id="upd-extra"></span>
@@ -188,7 +191,7 @@
 <!-- Footer mirroring the builder page's: the way back, the repo, privacy. Deliberately
      outside #gate/#app/#enroll so it is reachable whether or not anyone is signed in. -->
 <p class="mt-3 small text-center muted">
-  <a href="index.html" class="link-secondary text-decoration-none"><i class="bi bi-arrow-left me-1"></i><span data-i18n="builder_link">builder</span></a> · <a href="https://github.com/thingino/thingino-image-builder" target="_blank" class="link-secondary text-decoration-none" data-i18n="footer_link">thingino image builder</a> · <a href="privacy.html" class="link-secondary text-decoration-none"><span data-i18n="privacy_link">privacy</span></a>
+  <a href="index.html" class="link-secondary text-decoration-none"><i class="bi bi-arrow-left me-1"></i><span data-i18n="builder_link">builder</span></a> · <a href="https://github.com/thingino/thingino-image-builder" target="_blank" class="link-secondary text-decoration-none" data-i18n="footer_link">thingino image builder</a> <span id="admin-ver" class="muted"></span> · <a href="privacy.html" class="link-secondary text-decoration-none"><span data-i18n="privacy_link">privacy</span></a>
 </p>
 
 <script src="i18n.js"></script>

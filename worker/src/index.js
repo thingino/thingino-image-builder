@@ -928,7 +928,9 @@ async function handleAdminStats(request, env) {
     // Lets the panel link a build's run id straight to its Actions run, without the
     // static page having to hardcode the repo (config.js is rewritten at deploy time).
     repo: env.GITHUB_REPO || null,
-    version: env.VERSION || "v0.1.0", latest_version: null, update_available: false,
+    // No self-update on the Worker: it deploys via git push, not a container swap, so the
+    // admin version card is hidden and the version shows in the page footer instead.
+    version: env.VERSION || "v0.1.0", latest_version: null, update_available: false, self_update: false,
     me, master: me === "master", manage_users: await adminCan(env, me, "manage_users"),
     edit_notice: await adminCan(env, me, "edit_notice"),
   }, 200, env);

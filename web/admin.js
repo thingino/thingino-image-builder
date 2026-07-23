@@ -78,6 +78,13 @@ async function refresh(){
   $('kill-state').innerHTML=enabled?'<span class="text-success">'+I18N.t('kill_enabled')+'</span>':'<span class="text-danger">'+I18N.t('kill_disabled')+'</span>';
   const kb=$('kill-btn'); kb.textContent=enabled?I18N.t('kill_disable'):I18N.t('kill_enable'); kb.className='btn btn-sm '+(enabled?'btn-outline-danger':'btn-thingino');
   $('kill-extra').textContent=I18N.t('kill_extra',{n:d.max_concurrent,m:Math.round(d.retention_secs/60)});
+  // Version + self-update: the card only makes sense on a backend that can self-update
+  // (the VPS broker sets self_update). The Worker can't, so there the card is hidden and
+  // the version shows in the footer instead. The footer span is emptied on the broker so
+  // the version isn't printed twice.
+  const selfUpdate=!!d.self_update;
+  $('version-card').style.display=selfUpdate?'':'none';
+  $('admin-ver').textContent=selfUpdate?'':(d.version||'');
   $('ver').textContent=d.version||'–';
   if(d.update_available){
     $('upd-badge').innerHTML='<span class="badge text-bg-warning ms-1">'+I18N.t('update_available',{v:esc(d.latest_version)})+'</span>';
