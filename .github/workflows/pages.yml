@@ -30,9 +30,9 @@ jobs:
       - name: Point the UI at the Worker
         run: |
           echo "window.API_BASE='https://thingino-image-builder-1d2e9b23.gtxent.workers.dev';" > web/config.js
-          # Custom domain disabled for now (no DNS yet) — serves at thingino.github.io/<repo>/.
-          # To enable image-builder.thingino.com later: add the CNAME DNS record, then
-          #   echo "image-builder.thingino.com" > web/CNAME
+          # The custom domain (image-builder.thingino.com) is live and configured in the
+          # repo's Pages settings, not by a CNAME file in the uploaded artifact, so there
+          # is deliberately no web/CNAME to write or keep in sync here.
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with:
