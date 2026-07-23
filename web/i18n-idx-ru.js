@@ -70,4 +70,5 @@ I18N.add("ru", {
   link_not_on_branch: "{board} недоступна в ветке {branch}.",
   link_switch: "Перейти на {branch}",
   link_not_anywhere: "{board} недоступна ни в одной ветке.",
+  dismiss_btn: "Закрыть",
 });

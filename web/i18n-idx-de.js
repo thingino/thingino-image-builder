@@ -70,4 +70,5 @@ I18N.add("de", {
   link_not_on_branch: "{board} ist auf {branch} nicht verfügbar.",
   link_switch: "Zu {branch} wechseln",
   link_not_anywhere: "{board} ist auf keinem Branch verfügbar.",
+  dismiss_btn: "Schließen",
 });

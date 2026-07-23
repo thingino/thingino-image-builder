@@ -70,4 +70,5 @@ I18N.add("uk", {
   link_not_on_branch: "{board} недоступна в гілці {branch}.",
   link_switch: "Перейти до {branch}",
   link_not_anywhere: "{board} недоступна в жодній гілці.",
+  dismiss_btn: "Закрити",
 });

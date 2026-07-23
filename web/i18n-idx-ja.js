@@ -70,4 +70,5 @@ I18N.add("ja", {
   link_not_on_branch: "{board} は {branch} にはありません。",
   link_switch: "{branch} に切り替え",
   link_not_anywhere: "{board} はどのブランチにもありません。",
+  dismiss_btn: "閉じる",
 });

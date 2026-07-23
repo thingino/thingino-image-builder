@@ -70,4 +70,5 @@ I18N.add("ko", {
   link_not_on_branch: "{board}은(는) {branch}에 없습니다.",
   link_switch: "{branch}(으)로 전환",
   link_not_anywhere: "{board}은(는) 어떤 브랜치에도 없습니다.",
+  dismiss_btn: "닫기",
 });

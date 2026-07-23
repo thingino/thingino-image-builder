@@ -70,4 +70,5 @@ I18N.add("pl", {
   link_not_on_branch: "{board} nie jest dostępna w gałęzi {branch}.",
   link_switch: "Przełącz na {branch}",
   link_not_anywhere: "{board} nie jest dostępna w żadnej gałęzi.",
+  dismiss_btn: "Zamknij",
 });

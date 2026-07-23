@@ -70,4 +70,5 @@ I18N.add("zh-CN", {
   link_not_on_branch: "{branch} 分支上没有 {board}。",
   link_switch: "切换到 {branch}",
   link_not_anywhere: "任何分支上都没有 {board}。",
+  dismiss_btn: "关闭",
 });

@@ -70,4 +70,5 @@ I18N.add("nl", {
   link_not_on_branch: "{board} is niet beschikbaar op {branch}.",
   link_switch: "Overschakelen naar {branch}",
   link_not_anywhere: "{board} is op geen enkele branch beschikbaar.",
+  dismiss_btn: "Sluiten",
 });

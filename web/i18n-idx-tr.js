@@ -70,4 +70,5 @@ I18N.add("tr", {
   link_not_on_branch: "{board} {branch} dalında mevcut değil.",
   link_switch: "{branch} dalına geç",
   link_not_anywhere: "{board} hiçbir dalda mevcut değil.",
+  dismiss_btn: "Kapat",
 });

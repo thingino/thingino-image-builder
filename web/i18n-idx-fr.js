@@ -70,4 +70,5 @@ I18N.add("fr", {
   link_not_on_branch: "{board} n'est pas disponible sur {branch}.",
   link_switch: "Passer à {branch}",
   link_not_anywhere: "{board} n'est disponible sur aucune branche.",
+  dismiss_btn: "Fermer",
 });

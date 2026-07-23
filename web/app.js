@@ -1,10 +1,11 @@
   const $=id=>document.getElementById(id);
   const API = window.API_BASE || '';
   const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const LS_KEY='thingino_builder_uid', MY_KEY='thingino_my_build';
+  const LS_KEY='thingino_builder_uid', MY_KEY='thingino_my_build', DIS_KEY='thingino_dismissed';
   const getUid=()=>localStorage.getItem(LS_KEY)||'';
   const setUid=u=>{ if(u) localStorage.setItem(LS_KEY,u); };
   let myId=localStorage.getItem(MY_KEY)||null;
+  let dismissedId=localStorage.getItem(DIS_KEY)||null;
   const setMy=id=>{ myId=id; if(id) localStorage.setItem(MY_KEY,id); else localStorage.removeItem(MY_KEY); };
   const REFS=['master','ciao','stable'], REF_KEY='thingino_ref';
   let curRef=REFS.includes(localStorage.getItem(REF_KEY))?localStorage.getItem(REF_KEY):'master';
@@ -194,6 +195,21 @@
     if(el) el.innerHTML=I18N.t('footer_limits',{user:userHourly,conc:maxConc,mins:retentionMins});
   }
 
+  // Stop tracking the finished build: drops the box and the localStorage pointer. Nothing
+  // server-side changes, the box is only this page's record of it.
+  // The id is remembered because the VPS broker's stats carry a `you` for the requester's
+  // latest build whatever its state, and consume() adopts that when nothing is tracked:
+  // without this the box would come straight back on the next poll. (The Worker sends no
+  // `you` at all, so this only bites the broker deployment.)
+  const clearMine=()=>{
+    if(myId){ dismissedId=myId; try{ localStorage.setItem(DIS_KEY,myId); }catch(_){} }
+    setMy(null); you=null; renderYou(); $('board').focus();
+  };
+  // Dismiss for the states whose box is purely a record (failed / cancelled / expired).
+  // Deliberately not on 'done': its box holds a live download link, and there is already
+  // a Build another button for moving on, so an X there would be a one-click way to lose
+  // the link to a build that took half an hour.
+  const dismissBtn=()=>`<button type="button" class="btn-close btn-close-white" id="dismiss" title="${esc(I18N.t('dismiss_btn'))}" aria-label="${esc(I18N.t('dismiss_btn'))}"></button>`;
   function renderYou(){
     const picker=$('picker'), mb=$('mybuild');
     if(!you){ mb.classList.add('d-none'); mb.innerHTML=''; picker.classList.remove('d-none'); return; }
@@ -214,12 +230,13 @@
         <button class="btn btn-outline-secondary btn-sm" id="again">${I18N.t('build_another_btn')}</button></div>
         <div class="small text-warning mt-2"><i class="bi bi-clock me-1"></i>${I18N.t('download_window_note',{mins:retentionMins})}</div></div>`;
     else if(you.state==='failed')
-      h=`<div class="alert alert-danger mb-0"><i class="bi bi-exclamation-triangle-fill me-1"></i><strong>${I18N.t('state_failed')}</strong>${meta}<div class="mt-2"><button class="btn btn-outline-warning btn-sm" id="again">${I18N.t('try_again_btn')}</button></div></div>`;
+      h=`<div class="alert alert-danger alert-dismissible mb-0">${dismissBtn()}<i class="bi bi-exclamation-triangle-fill me-1"></i><strong>${I18N.t('state_failed')}</strong>${meta}<div class="mt-2"><button class="btn btn-outline-warning btn-sm" id="again">${I18N.t('try_again_btn')}</button></div></div>`;
     else
-      h=`<div class="alert alert-secondary mb-0"><strong>${you.state==='expired'?I18N.t('state_expired'):I18N.t('state_cancelled')}</strong>${meta}<div class="mt-2"><button class="btn btn-outline-secondary btn-sm" id="again">${I18N.t('build_again_btn')}</button></div></div>`;
+      h=`<div class="alert alert-secondary alert-dismissible mb-0">${dismissBtn()}<strong>${you.state==='expired'?I18N.t('state_expired'):I18N.t('state_cancelled')}</strong>${meta}<div class="mt-2"><button class="btn btn-outline-secondary btn-sm" id="again">${I18N.t('build_again_btn')}</button></div></div>`;
     mb.innerHTML=h;
     const c=$('cancel'); if(c) c.onclick=cancelBuild;
-    const a=$('again'); if(a) a.onclick=()=>{ setMy(null); you=null; renderYou(); $('board').focus(); };
+    const a=$('again'); if(a) a.onclick=clearMine;
+    const d=$('dismiss'); if(d) d.onclick=clearMine;
   }
 
   let srvVer=null, lastData=0, lastStatsData=null;
@@ -237,7 +254,7 @@
     maxConc=data.max_concurrent||6; avgSecs=data.avg_build_secs; userHourly=data.user_hourly||userHourly;
     if(data.retention_secs) retentionMins=Math.max(1,Math.round(data.retention_secs/60));
     renderGlobal(data); noteCommit(data.commit);
-    if(!myId && data.you){ setMy(data.you.build_id); }
+    if(!myId && data.you && data.you.build_id!==dismissedId){ setMy(data.you.build_id); }
     // Embedded status of our tracked build (only trust it if it was asked for us).
     if(askedMy && askedMy===myId && 'my_build' in data){
       if(data.my_build===null){ setMy(null); you=null; renderYou(); }

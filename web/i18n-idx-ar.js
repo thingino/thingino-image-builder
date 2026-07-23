@@ -70,4 +70,5 @@ I18N.add("ar", {
   link_not_on_branch: "{board} غير متوفرة في {branch}.",
   link_switch: "التبديل إلى {branch}",
   link_not_anywhere: "{board} غير متوفرة في أي فرع.",
+  dismiss_btn: "إغلاق",
 });
