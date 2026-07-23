@@ -432,6 +432,12 @@ async function dispatchBuild(env, id, defconfig, commit) {
   });
   if (!r.ok) throw new Error(`dispatch ${r.status}`);
 }
+// Newest 50 dispatch runs. Failed runs linger here for FAILED_RETENTION_SECS, so the
+// list can in principle overflow, but do NOT raise this to 100: each run object is ~13 KB
+// of JSON we mostly discard, and a full page is ~1.3 MB to parse against the free plan's
+// 10 ms CPU per invocation (cron included). Overflowing 50 force-fails one build at its
+// timeout; overflowing the CPU budget kills the whole tick, and reaping is what drains
+// the pile, so that would not recover. Overflow needs ~34 failures inside one 8h window.
 async function fetchRuns(env) {
   const r = await ghFetch(env, `https://api.github.com/repos/${env.GITHUB_REPO}/actions/runs?per_page=50&event=repository_dispatch`);
   if (!r.ok) return [];
@@ -566,7 +572,10 @@ async function schedulerWork(env, ts) {
   const reap = ((await env.DB.prepare("SELECT id,state,run_id,finished_ts FROM builds WHERE state IN ('done','failed','cancelled') AND finished_ts IS NOT NULL").all()).results) || [];
   for (const b of reap) {
     const age = ts - b.finished_ts;
-    const expired = b.state === "done" ? age > cfg.retention : age > cfg.failedRetention;
+    // A failed build holds its Actions run (and so its logs) for the longer window, so an
+    // admin can still open the run from the panel and see what broke. done and cancelled
+    // reap on the short one: a cancelled build's run was already deleted by the cancel path.
+    const expired = age > (b.state === "failed" ? cfg.failedRetention : cfg.retention);
     if (!expired) continue;
     const assetOk = b.state === "done" ? await deleteReleaseAssets(env, b.id) : true;
     const runOk = b.run_id ? await deleteRun(env, b.run_id) : true;
@@ -886,6 +895,9 @@ async function handleAdminStats(request, env) {
       maxConcurrent: counts.running, maxQueue: counts.queued,
     },
     recent_builds: builds, recent_events: events,
+    // Lets the panel link a build's run id straight to its Actions run, without the
+    // static page having to hardcode the repo (config.js is rewritten at deploy time).
+    repo: env.GITHUB_REPO || null,
     version: env.VERSION || "v0.1.0", latest_version: null, update_available: false,
     me, master: me === "master", manage_users: await adminCan(env, me, "manage_users"),
   }, 200, env);

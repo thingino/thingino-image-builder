@@ -39,7 +39,10 @@ GLOBAL_HOURLY_LIMIT = "20"
 MAX_CONCURRENT_BUILDS = "6"
 MAX_QUEUE = "50"
 RETENTION_SECS = "1800"
-FAILED_RETENTION_SECS = "3600"
+# A failed build keeps its Actions run, and so its logs, this long before the reaper
+# deletes it, so an admin has a working link from the panel to what actually broke.
+# 8h, against 30 min for a successful build (whose artifact is the expensive part).
+FAILED_RETENTION_SECS = "28800"
 BUILD_TIMEOUT_SECS = "5400"
 # Origin(s) allowed to call this Worker from a browser. The UI is hosted on GitHub
 # Pages (a different origin), so CORS is required. "*" is fine here: the API is
