@@ -654,7 +654,7 @@ async fn main() -> anyhow::Result<()> {
         max_concurrent: env_i64("MAX_CONCURRENT_BUILDS", 6),
         max_queue: env_i64("MAX_QUEUE", 50),
         retention_secs: env_i64("RETENTION_SECS", 1800),
-        failed_retention_secs: env_i64("FAILED_RETENTION_SECS", 3600),
+        failed_retention_secs: env_i64("FAILED_RETENTION_SECS", 28800),
         build_timeout_secs: env_i64("BUILD_TIMEOUT_SECS", 5400),
         ip_header: std::env::var("IP_HEADER").ok().filter(|s| !s.is_empty()),
         admin_token: std::env::var("ADMIN_TOKEN").ok().filter(|s| !s.is_empty()),
@@ -1300,6 +1300,9 @@ async fn admin_stats(State(st): State<AppState>, headers: HeaderMap) -> Response
         "retention_secs": lim.retention,
         "recent_builds": recent_builds,
         "recent_events": recent_events,
+        // Lets the panel link a build's run id straight to its Actions run, without the
+        // static page having to hardcode the repo (config.js is rewritten at deploy time).
+        "repo": st.cfg.github_repo.clone(),
         "version": current,
         "latest_version": latest,
         "update_available": update_available,
@@ -2254,7 +2257,10 @@ async fn scheduler_step(st: &AppState) -> anyhow::Result<()> {
     };
     for (id, state, run_id, finished_ts) in reap {
         let age = now_ts - finished_ts;
-        let expired = if state == "done" { age > lim.retention } else { age > lim.failed_retention };
+        // A failed build holds its Actions run (and so its logs) for the longer window, so an
+        // admin can still open the run from the panel and see what broke. done and cancelled
+        // reap on the short one: a cancelled build's run was already deleted by the cancel path.
+        let expired = if state == "failed" { age > lim.failed_retention } else { age > lim.retention };
         if !expired {
             continue;
         }
@@ -2284,6 +2290,11 @@ async fn scheduler_step(st: &AppState) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Newest 50 dispatch runs. Failed runs linger here for FAILED_RETENTION_SECS, so the
+/// list can in principle overflow, but do NOT raise this to 100: each run object is ~13 KB
+/// of JSON we mostly discard. The Worker twin shares this ceiling and parses it against a
+/// 10 ms CPU budget, so the two stay identical rather than diverging on page size.
+/// Overflow needs ~34 failures inside one 8h window.
 async fn fetch_runs(st: &AppState) -> anyhow::Result<Vec<RunRow>> {
     let url = format!(
         "https://api.github.com/repos/{}/actions/runs?per_page=50&event=repository_dispatch",
