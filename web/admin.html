@@ -90,6 +90,38 @@
     <span class="small muted ms-auto" id="kill-extra"></span>
   </div></div>
 
+  <!-- One notice at a time, separate from the builds-disabled banner. Hidden unless this
+       admin holds edit_notice (or is master), like the users card. -->
+  <div class="card mb-3" id="notice-card" style="display:none"><div class="card-body">
+    <h2 class="card-title fs-6 mb-1"><i class="bi bi-megaphone me-1"></i> <span data-i18n="notice_title">Notice banner</span></h2>
+    <div class="small muted mb-2" data-i18n="notice_hint">Shown to every visitor on the builder page, exactly as written, in whatever language you write it.</div>
+    <textarea id="notice-text" class="form-control form-control-sm mb-2" rows="2" maxlength="500" data-i18n-ph="notice_ph"></textarea>
+    <div class="d-flex align-items-end gap-2 flex-wrap">
+      <div>
+        <label class="form-label small mb-0" for="notice-level" data-i18n="notice_level">Level</label>
+        <select id="notice-level" class="form-select form-select-sm">
+          <option value="info" data-i18n="notice_info">Info</option>
+          <option value="warning" data-i18n="notice_warning">Warning</option>
+          <option value="danger" data-i18n="notice_danger">Danger</option>
+        </select>
+      </div>
+      <div>
+        <label class="form-label small mb-0" for="notice-hours" data-i18n="notice_expiry">Clears after</label>
+        <select id="notice-hours" class="form-select form-select-sm">
+          <option value="0" data-i18n="notice_never">never</option>
+          <option value="1">1h</option>
+          <option value="6">6h</option>
+          <option value="24">24h</option>
+          <option value="72">72h</option>
+        </select>
+      </div>
+      <button id="notice-post" class="btn btn-sm btn-thingino" data-i18n="notice_post">Post</button>
+      <button id="notice-clear" class="btn btn-sm btn-outline-secondary" data-i18n="notice_clear">Clear</button>
+      <span class="small muted ms-auto" id="notice-msg"></span>
+    </div>
+    <div class="small mt-2" id="notice-state"></div>
+  </div></div>
+
   <div class="card mb-3"><div class="card-body d-flex align-items-center gap-3 flex-wrap">
     <div><span data-i18n="version_label">Version</span> <code id="ver">…</code> <span id="upd-badge"></span></div>
     <button id="upd-btn" class="btn btn-sm btn-thingino" style="display:none" data-i18n="update_now">Update now</button>

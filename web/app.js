@@ -77,6 +77,16 @@
     const b=$('banner');
     if(d.builds_enabled===false){ b.innerHTML='<i class="bi bi-exclamation-triangle me-1"></i>'+I18N.t('builds_disabled'); b.classList.remove('d-none'); }
     else b.classList.add('d-none');
+    // Admin-posted notice: informational only, so unlike the banner above it never touches
+    // the picker. The text is admin-typed and this is a public page, so it goes in as text
+    // and only the icon is markup. It is one notice at a time, by construction server-side.
+    const nb=$('notice'), n=d.notice;
+    if(n&&n.text){
+      const lvl=['info','warning','danger'].includes(n.level)?n.level:'info';
+      nb.className='alert alert-'+lvl+' py-2 small';
+      nb.innerHTML='<i class="bi bi-'+(lvl==='info'?'info-circle':'exclamation-triangle')+' me-1"></i><span></span>';
+      nb.querySelector('span').textContent=n.text;
+    } else { nb.className='alert py-2 small d-none'; nb.textContent=''; }
     // During maintenance (kill switch off) the picker is disabled, not just the banner.
     const off=d.builds_enabled===false;
     if($('board').disabled!==off){ $('board').disabled=off; validate(); }

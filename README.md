@@ -37,6 +37,8 @@ browser ──POST /api/build──▶ Rust broker ──repository_dispatch─�
   "cancelling" state until the run stops), 30-minute download window.
 - **Admin panel** (`/admin.html`): live stats, recent builds/events with
   requester uid + full **IP** (click → /64 bucket), a global **kill switch**,
+  a **notice banner** (one at a time, info/warning/danger, optional auto-expiry,
+  shown to every visitor alongside the builds-disabled banner),
   **live limit editing** (with usage), per-build **cancel / remove**, **clear logs
   / finished builds**, **named admin accounts** (invite-link self-enrollment,
   PBKDF2 passwords, per-user TOTP) with a **master break-glass** token, and an

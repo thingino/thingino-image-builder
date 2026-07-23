@@ -87,6 +87,7 @@ async function refresh(){
     $('upd-btn').style.display='none';
   }
   renderLimits(d.limits, d.usage);
+  renderNotice(d);
   isMaster=!!d.master; if(d.master||d.manage_users){ if(!usersShown){ $('users-card').style.display=''; usersShown=true; renderUsers(); } } else $('users-card').style.display='none';
   const c=d.counts||{};
   $('tiles').innerHTML=[['state_running',c.running],['state_queued',c.queued],['state_done',c.done],['state_failed',c.failed],['state_cancelled',c.cancelled],['state_expired',c.expired],['tile_24h',d.last24h],['tile_total_done',d.total_done??0],['tile_avg_build',d.avg_build_secs?Math.round(d.avg_build_secs/60)+'m':'–']].map(([k,n])=>tile(I18N.t(k),n)).join('');
@@ -95,6 +96,38 @@ async function refresh(){
   $('updated').textContent=I18N.t('updated',{t:new Date().toLocaleTimeString()});
 }
 async function toggle(){ await fetch(API+'/api/admin/toggle',{method:'POST',headers:{Authorization:'Bearer '+tok(),'content-type':'application/json'},body:JSON.stringify({enabled:!enabled})}); refresh(); }
+// --- notice banner: one at a time, posted to the public builder page ---
+const NLVL={info:'bg-info text-dark',warning:'bg-warning text-dark',danger:'bg-danger'};
+let noticeSeen=null;
+function renderNotice(d){
+  const can=!!(d.master||d.edit_notice);
+  $('notice-card').style.display=can?'':'none';
+  if(!can) return;
+  const n=d.notice;
+  $('notice-state').innerHTML=n
+    ?`<span class="badge ${NLVL[n.level]||NLVL.info}">${esc(I18N.t('notice_'+n.level))}</span> ${esc(n.text)}`
+      +(n.until?` <span class="muted">${esc(I18N.t('notice_expires',{t:new Date(n.until*1000).toLocaleString()}))}</span>`:'')
+    :`<span class="muted">${esc(I18N.t('notice_none'))}</span>`;
+  // Refill the editor from the server only when the server's value actually changed and the
+  // box isn't focused, so the 10s poll can't overwrite a half-typed notice.
+  const sig=JSON.stringify(n||null);
+  if(sig!==noticeSeen&&document.activeElement!==$('notice-text')){
+    noticeSeen=sig;
+    $('notice-text').value=n?n.text:'';
+    $('notice-level').value=n?n.level:'info';
+  }
+}
+async function postNotice(clear){
+  const body=clear?{text:''}:{text:$('notice-text').value,level:$('notice-level').value,hours:parseInt($('notice-hours').value,10)||0};
+  $('notice-msg').textContent=I18N.t('saving');
+  try{
+    const r=await fetch(API+'/api/admin/notice',{method:'POST',headers:{Authorization:'Bearer '+tok(),'content-type':'application/json'},body:JSON.stringify(body)});
+    const j=await r.json().catch(()=>({}));
+    if(r.ok){ if(clear) $('notice-text').value=''; noticeSeen=null; $('notice-msg').textContent=I18N.t('saved'); }
+    else $('notice-msg').textContent=j.error||I18N.t('failed');
+  }catch{ $('notice-msg').textContent=I18N.t('failed'); }
+  refresh();
+}
 async function clearLogs(){ if(!confirm(I18N.t('confirm_clear_logs'))) return; await fetch(API+'/api/admin/clear-logs',{method:'POST',headers:{Authorization:'Bearer '+tok()}}); refresh(); }
 async function clearBuilds(){ if(!confirm(I18N.t('confirm_clear_builds'))) return; await fetch(API+'/api/admin/clear-builds',{method:'POST',headers:{Authorization:'Bearer '+tok()}}); refresh(); }
 async function resetLimits(){ if(!confirm(I18N.t('confirm_reset_limits'))) return; const r=await fetch(API+'/api/admin/reset-limits',{method:'POST',headers:{Authorization:'Bearer '+tok()}}); if(r.ok) $('kill-extra').textContent=I18N.t('hourly_reset'); refresh(); }
@@ -125,7 +158,7 @@ async function doUpdate(){
 
 // --- admin user management (master only) + invite enrollment ---
 let usersShown=false, isMaster=false;
-const PRIVS=['clear_logs','clear_builds','reset_limits','edit_limits','kill_switch','manage_users'];
+const PRIVS=['clear_logs','clear_builds','reset_limits','edit_limits','kill_switch','manage_users','edit_notice'];
 const privCell=u=>isMaster?PRIVS.map(p=>`<label class="me-2 small" style="white-space:nowrap"><input type="checkbox" class="privbox" data-u="${esc(u.username)}" data-p="${p}" ${(u.privileges||[]).includes(p)?'checked':''}> ${I18N.t('priv_'+p)}</label>`).join(''):(u.privileges||[]).map(p=>`<span class="badge bg-secondary me-1">${esc(I18N.t('priv_'+p))}</span>`).join('');
 async function renderUsers(){
   const r=await fetch(API+'/api/admin/users',{headers:{Authorization:'Bearer '+tok()}});
@@ -181,6 +214,8 @@ $('kill-btn').onclick=toggle;
 $('clearlogs-btn').onclick=clearLogs;
 $('clearbuilds-btn').onclick=clearBuilds;
 $('resetlimits-btn').onclick=resetLimits;
+$('notice-post').onclick=()=>postNotice(false);
+$('notice-clear').onclick=()=>postNotice(true);
 $('limits-edit').onclick=editLimits;
 $('limits-save').onclick=saveLimits;
 $('limits-cancel').onclick=viewLimits;
