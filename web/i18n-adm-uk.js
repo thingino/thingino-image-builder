@@ -160,4 +160,8 @@ I18N.add("uk", {
   notice_none: "не опубліковано",
   notice_expires: "діє до {t}",
   priv_edit_notice: "редагувати оголошення",
+  // page footer (back to the builder, repo, privacy)
+  builder_link: "збірка",
+  footer_link: "збирач образів thingino",
+  privacy_link: "конфіденційність",
 });

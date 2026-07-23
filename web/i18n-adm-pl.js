@@ -160,4 +160,8 @@ I18N.add("pl", {
   notice_none: "brak opublikowanych",
   notice_expires: "wygasa {t}",
   priv_edit_notice: "edycja banera",
+  // page footer (back to the builder, repo, privacy)
+  builder_link: "kreator",
+  footer_link: "thingino kreator obrazów",
+  privacy_link: "prywatność",
 });

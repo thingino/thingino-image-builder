@@ -160,4 +160,8 @@ I18N.add("ar", {
   notice_none: "لا يوجد إشعار",
   notice_expires: "ينتهي {t}",
   priv_edit_notice: "تحرير الإشعار",
+  // page footer (back to the builder, repo, privacy)
+  builder_link: "المُنشئ",
+  footer_link: "منشئ صور thingino",
+  privacy_link: "الخصوصية",
 });

@@ -160,4 +160,8 @@ I18N.add("fr", {
   notice_none: "aucun publié",
   notice_expires: "expire {t}",
   priv_edit_notice: "modifier le bandeau",
+  // page footer (back to the builder, repo, privacy)
+  builder_link: "générateur",
+  footer_link: "générateur d'images thingino",
+  privacy_link: "confidentialité",
 });

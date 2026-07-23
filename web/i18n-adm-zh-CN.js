@@ -160,4 +160,8 @@ I18N.add("zh-CN", {
   notice_none: "未发布",
   notice_expires: "{t} 到期",
   priv_edit_notice: "编辑公告",
+  // page footer (back to the builder, repo, privacy)
+  builder_link: "构建页",
+  footer_link: "thingino 镜像构建器",
+  privacy_link: "隐私",
 });

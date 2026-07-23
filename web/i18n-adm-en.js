@@ -160,4 +160,8 @@ I18N.add("en", {
   notice_none: "none posted",
   notice_expires: "expires {t}",
   priv_edit_notice: "edit notice",
+  // page footer (back to the builder, repo, privacy)
+  builder_link: "builder",
+  footer_link: "thingino image builder",
+  privacy_link: "privacy",
 });

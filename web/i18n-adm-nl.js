@@ -160,4 +160,8 @@ I18N.add("nl", {
   notice_none: "niets geplaatst",
   notice_expires: "verloopt {t}",
   priv_edit_notice: "mededeling bewerken",
+  // page footer (back to the builder, repo, privacy)
+  builder_link: "builder",
+  footer_link: "thingino Image-Builder",
+  privacy_link: "privacy",
 });

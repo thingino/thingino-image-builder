@@ -160,4 +160,8 @@ I18N.add("ru", {
   notice_none: "не опубликовано",
   notice_expires: "действует до {t}",
   priv_edit_notice: "редактировать объявление",
+  // page footer (back to the builder, repo, privacy)
+  builder_link: "сборщик",
+  footer_link: "сборщик образов thingino",
+  privacy_link: "конфиденциальность",
 });

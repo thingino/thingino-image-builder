@@ -160,4 +160,8 @@ I18N.add("ja", {
   notice_none: "未掲載",
   notice_expires: "{t} に期限切れ",
   priv_edit_notice: "お知らせ編集",
+  // page footer (back to the builder, repo, privacy)
+  builder_link: "ビルダー",
+  footer_link: "thingino イメージビルダー",
+  privacy_link: "プライバシー",
 });

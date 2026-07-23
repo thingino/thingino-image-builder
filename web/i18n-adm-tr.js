@@ -160,4 +160,8 @@ I18N.add("tr", {
   notice_none: "yayınlanmadı",
   notice_expires: "bitiş {t}",
   priv_edit_notice: "duyuruyu düzenle",
+  // page footer (back to the builder, repo, privacy)
+  builder_link: "oluşturucu",
+  footer_link: "thingino imaj oluşturucu",
+  privacy_link: "gizlilik",
 });

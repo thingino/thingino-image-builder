@@ -160,4 +160,8 @@ I18N.add("ko", {
   notice_none: "게시된 공지 없음",
   notice_expires: "{t}에 만료",
   priv_edit_notice: "공지 편집",
+  // page footer (back to the builder, repo, privacy)
+  builder_link: "빌더",
+  footer_link: "thingino 이미지 빌더",
+  privacy_link: "개인정보처리방침",
 });

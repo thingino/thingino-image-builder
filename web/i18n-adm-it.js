@@ -160,4 +160,8 @@ I18N.add("it", {
   notice_none: "nessuno pubblicato",
   notice_expires: "scade {t}",
   priv_edit_notice: "modifica avviso",
+  // page footer (back to the builder, repo, privacy)
+  builder_link: "builder",
+  footer_link: "costruttore di immagini thingino",
+  privacy_link: "privacy",
 });

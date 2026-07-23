@@ -160,4 +160,8 @@ I18N.add("de", {
   notice_none: "keiner veröffentlicht",
   notice_expires: "läuft ab {t}",
   priv_edit_notice: "Hinweis bearbeiten",
+  // page footer (back to the builder, repo, privacy)
+  builder_link: "Builder",
+  footer_link: "thingino Image-Builder",
+  privacy_link: "Datenschutz",
 });
