@@ -29,6 +29,10 @@ browser ──POST /api/build──▶ Rust broker ──repository_dispatch─�
   `cameras-exp`), fetched live at the pinned commit; shows the exact commit built. A
   **Settings** panel switches the thingino **branch** (`master` / `ciao` / `stable`),
   and the camera list plus the `<branch>@<hash>` commit badge track the choice.
+- **Share links**: `?board=<defconfig>&branch=<ref>` opens the page with that
+  camera and branch already selected (never auto-building), and the **Copy link**
+  button produces one from the current selection. A camera that isn't on the
+  linked branch says so and offers a one-click switch to a branch that has it.
 - **Dedup**: an identical `(defconfig, commit)` that's in flight or built within
   the window is reused, not rebuilt.
 - **Limits**: per-user **2/hr**, per-IP **3/hr** (IPv6 bucketed by /64), global

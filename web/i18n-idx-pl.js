@@ -61,4 +61,13 @@ I18N.add("pl", {
   help_branch: "Wybierz gałąź thingino do zbudowania: master (domyślna), ciao lub stable. Lista kamer jest odpowiednio aktualizowana.",
   setting_help_label: "Pokaż podpowiedzi: najedź na dowolny element, aby zobaczyć wskazówkę (lub użyj przycisku ?).",
   privacy_link: "prywatność",
+  // share links (?board=&branch=) + the copy-link button
+  share_btn: "Kopiuj link",
+  share_copied: "Skopiowano",
+  help_share: "Kopiuje link, który otwiera tę stronę z już wybraną kamerą i gałęzią.",
+  link_bad_board: "Nazwa kamery w tym linku jest nieprawidłowa, wybierz kamerę poniżej.",
+  link_bad_branch: "Ten link wskazuje nieznaną gałąź, więc wybrano twoją zwykłą. Znane gałęzie: {refs}.",
+  link_not_on_branch: "{board} nie jest dostępna w gałęzi {branch}.",
+  link_switch: "Przełącz na {branch}",
+  link_not_anywhere: "{board} nie jest dostępna w żadnej gałęzi.",
 });

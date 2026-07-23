@@ -61,4 +61,13 @@ I18N.add("fr", {
   help_branch: "Choisissez la branche thingino à générer : master (par défaut), ciao ou stable. La liste des caméras est mise à jour en conséquence.",
   setting_help_label: "Affichez les astuces d'aide : survolez n'importe quel contrôle pour un conseil (ou utilisez le bouton ?).",
   privacy_link: "confidentialité",
+  // share links (?board=&branch=) + the copy-link button
+  share_btn: "Copier le lien",
+  share_copied: "Copié",
+  help_share: "Copie un lien qui ouvre cette page avec cette caméra et cette branche déjà sélectionnées.",
+  link_bad_board: "Le nom de caméra de ce lien n'est pas valide, choisissez une caméra ci-dessous.",
+  link_bad_branch: "Ce lien indique une branche inconnue, votre branche habituelle a donc été sélectionnée. Branches connues : {refs}.",
+  link_not_on_branch: "{board} n'est pas disponible sur {branch}.",
+  link_switch: "Passer à {branch}",
+  link_not_anywhere: "{board} n'est disponible sur aucune branche.",
 });

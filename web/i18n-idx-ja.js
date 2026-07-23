@@ -61,4 +61,13 @@ I18N.add("ja", {
   help_branch: "ビルドする thingino ブランチを選択します：master（デフォルト）、ciao、または stable。カメラ一覧もそれに合わせて更新されます。",
   setting_help_label: "ヘルプヒントを表示：任意のコントロールにカーソルを合わせるとヒントが表示されます（または ? ボタンを使用）。",
   privacy_link: "プライバシー",
+  // share links (?board=&branch=) + the copy-link button
+  share_btn: "リンクをコピー",
+  share_copied: "コピーしました",
+  help_share: "このカメラとブランチを選択した状態でこのページを開くリンクをコピーします。",
+  link_bad_board: "共有リンクのカメラ名が正しくありません。下から選んでください。",
+  link_bad_branch: "共有リンクのブランチが不明なため、いつものブランチを選択しました。既知のブランチ: {refs}",
+  link_not_on_branch: "{board} は {branch} にはありません。",
+  link_switch: "{branch} に切り替え",
+  link_not_anywhere: "{board} はどのブランチにもありません。",
 });

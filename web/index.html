@@ -57,13 +57,18 @@
         <div id="banner" class="alert alert-warning py-2 small d-none"></div>
 
         <div id="picker">
+          <!-- Share-link problems (unknown branch, camera not on this branch): filled by app.js -->
+          <div id="linkmsg" class="alert alert-warning py-2 small d-none"></div>
           <label class="form-label small muted mb-1" for="board" data-i18n="camera_label">Camera defconfig</label>
           <div class="input-group">
             <input id="board" type="text" list="boards" class="form-control" autocomplete="off" spellcheck="false" placeholder="start typing, e.g. atom_cam2…" data-i18n-ph="board_placeholder" data-help="help_board">
             <datalist id="boards"></datalist>
             <button id="go" class="btn btn-thingino" disabled data-help="help_build"><i class="bi bi-hammer me-1"></i><span data-i18n="build_btn">Build</span></button>
           </div>
-          <div class="form-text muted" id="hint" data-i18n="loading_cameras">Loading camera list…</div>
+          <div class="d-flex align-items-center gap-2">
+            <div class="form-text muted flex-grow-1 mt-0" id="hint" data-i18n="loading_cameras">Loading camera list…</div>
+            <button id="share" class="btn btn-outline-secondary btn-sm py-0 flex-shrink-0" data-help="help_share"><i class="bi bi-link-45deg me-1"></i><span data-i18n="share_btn">Copy link</span></button>
+          </div>
         </div>
 
         <div id="mybuild" class="d-none mt-1"></div>

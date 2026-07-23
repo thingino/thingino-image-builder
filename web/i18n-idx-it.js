@@ -61,4 +61,13 @@ I18N.add("it", {
   help_branch: "Scegli il ramo di thingino da compilare: master (predefinito), ciao o stable. L'elenco delle telecamere si aggiorna di conseguenza.",
   setting_help_label: "Mostra i suggerimenti di aiuto: passa il cursore su qualsiasi controllo per un consiglio (o usa il pulsante ?).",
   privacy_link: "privacy",
+  // share links (?board=&branch=) + the copy-link button
+  share_btn: "Copia link",
+  share_copied: "Copiato",
+  help_share: "Copia un link che apre questa pagina con questa camera e questo branch già selezionati.",
+  link_bad_board: "Il nome della camera in quel link non è valido, scegline una qui sotto.",
+  link_bad_branch: "Quel link indica un branch sconosciuto, quindi è stato selezionato il tuo abituale. Branch noti: {refs}.",
+  link_not_on_branch: "{board} non è disponibile su {branch}.",
+  link_switch: "Passa a {branch}",
+  link_not_anywhere: "{board} non è disponibile su nessun branch.",
 });

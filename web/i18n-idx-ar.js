@@ -61,4 +61,13 @@ I18N.add("ar", {
   help_branch: "اختر فرع thingino المراد بناؤه: master (افتراضي) أو ciao أو stable. تتحدّث قائمة الكاميرات لتطابقه.",
   setting_help_label: "إظهار تلميحات المساعدة: مرّر المؤشر فوق أي عنصر تحكم للحصول على تلميح (أو استخدم الزر ?).",
   privacy_link: "الخصوصية",
+  // share links (?board=&branch=) + the copy-link button
+  share_btn: "نسخ الرابط",
+  share_copied: "تم النسخ",
+  help_share: "ينسخ رابطًا يفتح هذه الصفحة مع اختيار هذه الكاميرا وهذا الفرع مسبقًا.",
+  link_bad_board: "اسم الكاميرا في هذا الرابط غير صالح، اختر كاميرا من الأسفل.",
+  link_bad_branch: "هذا الرابط يشير إلى فرع غير معروف، لذلك تم اختيار فرعك المعتاد. الفروع المعروفة: {refs}.",
+  link_not_on_branch: "{board} غير متوفرة في {branch}.",
+  link_switch: "التبديل إلى {branch}",
+  link_not_anywhere: "{board} غير متوفرة في أي فرع.",
 });

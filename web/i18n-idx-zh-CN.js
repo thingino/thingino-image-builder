@@ -61,4 +61,13 @@ I18N.add("zh-CN", {
   help_branch: "选择用于构建的 thingino 分支：master（默认）、ciao 或 stable。摄像头列表会相应更新。",
   setting_help_label: "显示帮助提示：将鼠标悬停在任意控件上即可查看提示（或使用 ? 按钮）。",
   privacy_link: "隐私",
+  // share links (?board=&branch=) + the copy-link button
+  share_btn: "复制链接",
+  share_copied: "已复制",
+  help_share: "复制一个链接，打开本页时会自动选好该摄像头和分支。",
+  link_bad_board: "该分享链接中的摄像头名称无效，请在下方选择摄像头。",
+  link_bad_branch: "该分享链接指定了未知分支，已改用你常用的分支。已知分支：{refs}。",
+  link_not_on_branch: "{branch} 分支上没有 {board}。",
+  link_switch: "切换到 {branch}",
+  link_not_anywhere: "任何分支上都没有 {board}。",
 });

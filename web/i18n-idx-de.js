@@ -61,4 +61,13 @@ I18N.add("de", {
   help_branch: "Wähle den thingino-Branch zum Bauen: master (Standard), ciao oder stable. Die Kameraliste wird entsprechend aktualisiert.",
   setting_help_label: "Hilfehinweise anzeigen: fahre über ein beliebiges Element für einen Tipp (oder nutze die Schaltfläche ?).",
   privacy_link: "Datenschutz",
+  // share links (?board=&branch=) + the copy-link button
+  share_btn: "Link kopieren",
+  share_copied: "Kopiert",
+  help_share: "Kopiert einen Link, der diese Seite mit dieser Kamera und diesem Branch bereits ausgewählt öffnet.",
+  link_bad_board: "Der Kameraname in diesem Link ist ungültig, wählen Sie unten eine Kamera.",
+  link_bad_branch: "Dieser Link nennt einen unbekannten Branch, daher ist Ihr üblicher ausgewählt. Bekannte Branches: {refs}.",
+  link_not_on_branch: "{board} ist auf {branch} nicht verfügbar.",
+  link_switch: "Zu {branch} wechseln",
+  link_not_anywhere: "{board} ist auf keinem Branch verfügbar.",
 });

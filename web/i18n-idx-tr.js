@@ -61,4 +61,13 @@ I18N.add("tr", {
   help_branch: "Derlenecek thingino dalını seçin: master (varsayılan), ciao veya stable. Kamera listesi buna göre güncellenir.",
   setting_help_label: "Yardım ipuçlarını göster: ipucu için herhangi bir kontrolün üzerine gelin (veya ? düğmesini kullanın).",
   privacy_link: "gizlilik",
+  // share links (?board=&branch=) + the copy-link button
+  share_btn: "Bağlantıyı kopyala",
+  share_copied: "Kopyalandı",
+  help_share: "Bu sayfayı bu kamera ve dal seçili olarak açan bir bağlantı kopyalar.",
+  link_bad_board: "Bu bağlantıdaki kamera adı geçersiz, aşağıdan bir kamera seçin.",
+  link_bad_branch: "Bu bağlantı bilinmeyen bir dal belirtiyor, bu yüzden her zamanki dalınız seçildi. Bilinen dallar: {refs}.",
+  link_not_on_branch: "{board} {branch} dalında mevcut değil.",
+  link_switch: "{branch} dalına geç",
+  link_not_anywhere: "{board} hiçbir dalda mevcut değil.",
 });

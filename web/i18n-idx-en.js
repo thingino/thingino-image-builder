@@ -61,4 +61,13 @@ I18N.add("en", {
   help_branch: "Pick the thingino branch to build: master (default), ciao, or stable. The camera list updates to match.",
   setting_help_label: "Show help hints: hover any control for a tip (or use the ? button).",
   privacy_link: "privacy",
+  // share links (?board=&branch=) + the copy-link button
+  share_btn: "Copy link",
+  share_copied: "Copied",
+  help_share: "Copies a link that opens this page with this camera and branch already selected.",
+  link_bad_board: "That shared link's camera name is not valid, pick a camera below.",
+  link_bad_branch: "That shared link names an unknown branch, so your usual one is selected instead. Known branches: {refs}.",
+  link_not_on_branch: "{board} is not available on {branch}.",
+  link_switch: "Switch to {branch}",
+  link_not_anywhere: "{board} is not available on any branch.",
 });

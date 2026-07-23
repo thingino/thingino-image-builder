@@ -61,4 +61,13 @@ I18N.add("pt", {
   help_branch: "Escolha a branch do thingino a compilar: master (padrão), ciao ou stable. A lista de câmeras é atualizada de acordo.",
   setting_help_label: "Mostra as dicas de ajuda: passe o cursor sobre qualquer controle para ver uma dica (ou use o botão ?).",
   privacy_link: "privacidade",
+  // share links (?board=&branch=) + the copy-link button
+  share_btn: "Copiar link",
+  share_copied: "Copiado",
+  help_share: "Copia um link que abre esta página com esta câmera e este branch já selecionados.",
+  link_bad_board: "O nome da câmera desse link não é válido, escolha uma câmera abaixo.",
+  link_bad_branch: "Esse link indica um branch desconhecido, então o seu habitual foi selecionado. Branches conhecidos: {refs}.",
+  link_not_on_branch: "{board} não está disponível em {branch}.",
+  link_switch: "Mudar para {branch}",
+  link_not_anywhere: "{board} não está disponível em nenhum branch.",
 });

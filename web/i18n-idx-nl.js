@@ -61,4 +61,13 @@ I18N.add("nl", {
   help_branch: "Kies de thingino-branch om te bouwen: master (standaard), ciao of stable. De cameralijst wordt overeenkomstig bijgewerkt.",
   setting_help_label: "Hulptips tonen: beweeg over een element voor een tip (of gebruik de knop ?).",
   privacy_link: "privacy",
+  // share links (?board=&branch=) + the copy-link button
+  share_btn: "Link kopiëren",
+  share_copied: "Gekopieerd",
+  help_share: "Kopieert een link die deze pagina opent met deze camera en branch al geselecteerd.",
+  link_bad_board: "De cameranaam in die link is ongeldig, kies hieronder een camera.",
+  link_bad_branch: "Die link noemt een onbekende branch, dus je gebruikelijke is geselecteerd. Bekende branches: {refs}.",
+  link_not_on_branch: "{board} is niet beschikbaar op {branch}.",
+  link_switch: "Overschakelen naar {branch}",
+  link_not_anywhere: "{board} is op geen enkele branch beschikbaar.",
 });

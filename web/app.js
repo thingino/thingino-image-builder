@@ -46,7 +46,7 @@
   // /api/defconfigs is fetched only when stats reports a commit we haven't seen.
   const DC_KEY=r=>'thingino_defconfigs:'+r;
   let dcCommit=null;
-  function applyBoards(list){ list.sort(); allowed=new Set(list); $('boards').innerHTML=list.map(b=>`<option value="${esc(b)}">`).join(''); validate(); }
+  function applyBoards(list){ list.sort(); allowed=new Set(list); $('boards').innerHTML=list.map(b=>`<option value="${esc(b)}">`).join(''); validate(); checkLink(); }
   async function fetchBoards(commit){
     const r=await api('/api/defconfigs?ref='+encodeURIComponent(curRef));
     if(overCap(r)){ capacityBanner(); return; }
@@ -66,6 +66,88 @@
     let c=null; try{ c=JSON.parse(localStorage.getItem(DC_KEY(curRef))||'null'); }catch(_){}
     if(c&&Array.isArray(c.list)&&c.list.length){ dcCommit=c.commit||null; applyBoards(c.list); }
     else fetchBoards(null);
+  }
+
+  /* ---- share links: ?board=<defconfig>&branch=<ref> ------------------------
+   * Pre-fills the picker from a link someone shared. It deliberately never starts the
+   * build: a link that did would let one forum post burn the global hourly cap for
+   * everyone who clicked it. */
+  const DEFCONFIG_RE=/^[a-z0-9_+]+$/;   // the token shape the Worker and build.yml enforce
+  let linkBoard='', linkMsg=null, linkProbed=false;
+  (function readLink(){
+    const q=new URLSearchParams(location.search);
+    const b=(q.get('board')||'').trim(), r=(q.get('branch')||'').trim();
+    // The bad token is not echoed back into the page: it came from the URL, so it is
+    // attacker-controlled, and the message reads fine without it.
+    if(b){ if(DEFCONFIG_RE.test(b)) linkBoard=b; else linkMsg={k:'link_bad_board',sticky:1}; }
+    // An unknown branch is called out, not silently coerced: the API normalises anything
+    // it doesn't recognise to master, so a typo would otherwise quietly build the wrong one.
+    if(r){
+      if(REFS.includes(r)) curRef=r;
+      else if(!linkMsg) linkMsg={k:'link_bad_branch',p:{refs:REFS.join(', ')},sticky:1};
+    }
+    // The link's branch applies to this visit only: REF_KEY is deliberately left alone, so
+    // following someone's link never rewrites your own saved default.
+  })();
+  function renderLinkMsg(){
+    const m=$('linkmsg');
+    if(!linkMsg){ m.classList.add('d-none'); m.innerHTML=''; return; }
+    if(linkMsg.raw) m.innerHTML=linkMsg.raw;
+    else{
+      m.innerHTML='<i class="bi bi-exclamation-triangle me-1"></i>'+I18N.t(linkMsg.k,linkMsg.p||{})
+        +(linkMsg.sw?` <button class="btn btn-sm btn-outline-warning ms-2" id="link-switch">${I18N.t('link_switch',{branch:esc(linkMsg.sw)})}</button>`:'');
+      const b=$('link-switch'); if(b) b.onclick=()=>switchTo(linkMsg.sw);
+    }
+    m.classList.remove('d-none');
+  }
+  const setLinkMsg=v=>{ linkMsg=v; renderLinkMsg(); };
+  // Switching from the offer below is also for this visit only, same reasoning: the
+  // Settings dialog stays the one place that changes your default branch.
+  function switchTo(ref){
+    if(!REFS.includes(ref)||ref===curRef) return;
+    curRef=ref; linkProbed=false; setLinkMsg(null); loadBoards(); wake(true); syncUrl();
+  }
+  // Configs come and go per branch, so a shared camera may simply not exist on the shared
+  // branch. Look for it on the others before calling it a dead end. Their lists are cached
+  // per branch, so this usually costs no request at all, and only ever runs on a miss.
+  async function otherBranchWith(board){
+    for(const r of REFS){
+      if(r===curRef) continue;
+      let list=null;
+      try{ const c=JSON.parse(localStorage.getItem(DC_KEY(r))||'null'); if(c&&Array.isArray(c.list)) list=c.list; }catch(_){}
+      if(!list){ const res=await api('/api/defconfigs?ref='+encodeURIComponent(r)); if(res.ok&&Array.isArray(res.data)) list=res.data; }
+      if(list&&list.indexOf(board)>=0) return r;
+    }
+    return null;
+  }
+  // Runs whenever the camera list changes: a shared board missing from this branch gets a
+  // real explanation (plus a one-click switch when another branch has it) instead of the
+  // generic "not a known defconfig" hint.
+  async function checkLink(){
+    if(!linkBoard) return;
+    if(allowed.has(linkBoard)){ linkProbed=false; if(linkMsg&&!linkMsg.sticky) setLinkMsg(null); return; }
+    if(linkProbed) return;
+    linkProbed=true;
+    const other=await otherBranchWith(linkBoard);
+    if(!allowed.size||allowed.has(linkBoard)) return;   // the list arrived or changed while probing
+    const p={board:esc(linkBoard),branch:esc(curRef)};
+    setLinkMsg(other?{k:'link_not_on_branch',p,sw:other}:{k:'link_not_anywhere',p});
+  }
+  // The link that reproduces what is selected right now. Board only when it is a real one
+  // for this branch; the branch always, so sharing just a branch works too.
+  function shareUrl(){
+    const u=new URL(location.origin+location.pathname);
+    const v=$('board').value.trim();
+    if(allowed.has(v)) u.searchParams.set('board',v);
+    u.searchParams.set('branch',curRef);
+    return u.toString();
+  }
+  // Mirror the selection into the address bar so copying it by hand works too. replaceState,
+  // never pushState, so this adds no history entries to back out through. An untouched visit
+  // keeps a clean URL: params appear only once there is a real camera to share.
+  function syncUrl(){
+    const v=$('board').value.trim();
+    history.replaceState(null,'',allowed.has(v)?shareUrl():location.origin+location.pathname);
   }
 
   function renderGlobal(d){
@@ -250,14 +332,24 @@
     else if(_helpHover){ hideHelpBalloon(); }
   });
 
-  $('board').addEventListener('input',validate);
+  // Typing supersedes whatever the link said, so its message goes and the URL follows along.
+  $('board').addEventListener('input',()=>{ validate(); if(linkMsg) setLinkMsg(null); syncUrl(); });
   $('board').addEventListener('keydown',e=>{ if(e.key==='Enter'&&!$('go').disabled) submit(); });
   $('go').addEventListener('click',submit);
+  $('share').addEventListener('click',async()=>{
+    const url=shareUrl(), lbl=$('share').querySelector('span'), was=lbl.textContent;
+    // Clipboard needs a secure context and permission; when it is refused, show the URL
+    // instead so the link is still copyable by hand.
+    try{ await navigator.clipboard.writeText(url); }
+    catch{ setLinkMsg({raw:`<i class="bi bi-link-45deg me-1"></i><code style="word-break:break-all">${esc(url)}</code>`}); return; }
+    lbl.textContent=I18N.t('share_copied');
+    setTimeout(()=>{ lbl.textContent=was; },1500);
+  });
   function openSettings(){ const r=$('branch-'+curRef); if(r) r.checked=true; $('settings-overlay').classList.remove('d-none'); }
   function closeSettings(){ $('settings-overlay').classList.add('d-none'); }
   function saveSettings(){
     const sel=document.querySelector('.branch-radio:checked');
-    if(sel&&REFS.includes(sel.value)&&sel.value!==curRef){ curRef=sel.value; localStorage.setItem(REF_KEY,curRef); loadBoards(); wake(true); }
+    if(sel&&REFS.includes(sel.value)&&sel.value!==curRef){ curRef=sel.value; localStorage.setItem(REF_KEY,curRef); linkProbed=false; loadBoards(); wake(true); syncUrl(); }
     closeSettings();
   }
   $('settings-btn').addEventListener('click',openSettings);
@@ -267,7 +359,11 @@
   $('btn-help').addEventListener('click',()=>setHelp(!helpMode));
   $('setting-help').addEventListener('change',e=>setHelp(e.target.checked));
   I18N.apply(); renderFooterLimits(); I18N.selector('lang-slot'); applyHelpMode();
-  window.addEventListener('i18nchange',()=>{ I18N.apply(); renderFooterLimits(); validate(); renderYou(); if(lastStatsData) renderGlobal(lastStatsData); applyHelpMode(); });
+  window.addEventListener('i18nchange',()=>{ I18N.apply(); renderFooterLimits(); validate(); renderYou(); renderLinkMsg(); if(lastStatsData) renderGlobal(lastStatsData); applyHelpMode(); });
+  // Seed the picker from a share link before the first list load, so the board is already
+  // in place when checkLink() gets to judge it against this branch.
+  if(linkBoard) $('board').value=linkBoard;
+  renderLinkMsg();
   loadBoards(); refresh(true);
   // Poll gently: 5s while your own build is active; idle backs off 15s -> 30s -> 60s;
   // nothing at all while the tab is hidden. wake() snaps back to the fast cadence on

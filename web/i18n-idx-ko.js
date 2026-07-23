@@ -61,4 +61,13 @@ I18N.add("ko", {
   help_branch: "빌드할 thingino 브랜치를 선택하세요: master(기본값), ciao 또는 stable. 카메라 목록도 그에 맞게 업데이트됩니다.",
   setting_help_label: "도움말 힌트 표시: 아무 컨트롤에나 마우스를 올리면 힌트가 표시됩니다(또는 ? 버튼 사용).",
   privacy_link: "개인정보처리방침",
+  // share links (?board=&branch=) + the copy-link button
+  share_btn: "링크 복사",
+  share_copied: "복사됨",
+  help_share: "이 카메라와 브랜치가 선택된 상태로 이 페이지를 여는 링크를 복사합니다.",
+  link_bad_board: "공유 링크의 카메라 이름이 올바르지 않습니다. 아래에서 선택하세요.",
+  link_bad_branch: "공유 링크에 알 수 없는 브랜치가 있어 평소 브랜치를 선택했습니다. 알려진 브랜치: {refs}",
+  link_not_on_branch: "{board}은(는) {branch}에 없습니다.",
+  link_switch: "{branch}(으)로 전환",
+  link_not_anywhere: "{board}은(는) 어떤 브랜치에도 없습니다.",
 });
