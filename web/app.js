@@ -25,11 +25,23 @@
     return {ok:r.ok, status:r.status, data};
   }
 
+  // The hint shares a flex row with the share button, so its layout classes live in the
+  // markup and only the colour is toggled here. Assigning className (as this used to)
+  // silently dropped them, leaving the text sitting off-centre against the button.
+  const setHint=(text,danger)=>{
+    const h=$('hint');
+    h.textContent=text;
+    h.classList.toggle('text-danger',!!danger);
+    h.classList.toggle('muted',!danger);
+  };
   function validate(){
     const v=$('board').value.trim(); $('go').disabled=!allowed.has(v)||$('board').disabled;
-    const h=$('hint');
-    if(v && !allowed.has(v)){ h.textContent=I18N.t('not_known_defconfig'); h.className='form-text text-danger'; }
-    else { h.textContent=allowed.size?I18N.t('profiles_available',{n:allowed.size}):''; h.className='form-text muted'; }
+    // Nothing to share until the box holds a real profile. Not tied to the Build button:
+    // during maintenance the picker is disabled but an already-chosen camera is still
+    // worth sharing ("this is the one, try later").
+    const sh=$('share'); if(sh) sh.disabled=!allowed.has(v);
+    if(v && !allowed.has(v)) setHint(I18N.t('not_known_defconfig'),1);
+    else setHint(allowed.size?I18N.t('profiles_available',{n:allowed.size}):'',0);
   }
   // Cloudflare's free daily request limit answers with a bare non-JSON 429 (our own
   // throttle 429s always carry a JSON error), so that shape means "out of capacity".
@@ -51,7 +63,7 @@
     const r=await api('/api/defconfigs?ref='+encodeURIComponent(curRef));
     if(overCap(r)){ capacityBanner(); return; }
     const {ok,data}=r;
-    if(!ok||!Array.isArray(data)){ if(!allowed.size){ const h=$('hint'); h.textContent=I18N.t('cameras_load_failed'); h.className='form-text text-danger'; } return; }
+    if(!ok||!Array.isArray(data)){ if(!allowed.size) setHint(I18N.t('cameras_load_failed'),1); return; }
     applyBoards(data); dcCommit=commit;
     try{ localStorage.setItem(DC_KEY(curRef),JSON.stringify({commit,list:data})); }catch(_){}
   }
@@ -272,7 +284,7 @@
     if(!allowed.has(defconfig)) return;
     $('go').disabled=true;
     const {ok,status,data}=await api('/api/build',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({defconfig,ref:curRef})});
-    if(!ok){ const h=$('hint'); h.textContent=(data&&data.error)||I18N.t('request_failed',{status}); h.className='form-text text-danger'; $('go').disabled=false; return; }
+    if(!ok){ setHint((data&&data.error)||I18N.t('request_failed',{status}),1); $('go').disabled=false; return; }
     setMy(data.build_id);
     you={build_id:data.build_id, defconfig:data.defconfig, state:data.state||'queued', position:data.position||0, elapsed_secs:0, download_url:data.download_url, deduped:data.deduped};
     youAt=Date.now(); renderYou(); refresh(true);
