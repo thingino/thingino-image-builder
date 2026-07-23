@@ -245,6 +245,47 @@ fn builds_enabled(conn: &Connection) -> bool {
     get_setting(conn, "builds_enabled").map(|v| v != "0").unwrap_or(true)
 }
 
+/// An admin-posted banner for the builder page, kept in ONE settings row ({text, level,
+/// until}) so a stats poll costs a single read. until=0 stays up until cleared; an expired
+/// notice is filtered on read rather than swept, so nothing has to run to hide it.
+const NOTICE_LEVELS: [&str; 3] = ["info", "warning", "danger"];
+/// The text is admin-typed and lands on a public page, so it is normalised on the way in:
+/// controls and bidi overrides (which could visually spoof the rest of the banner) become
+/// spaces, runs of whitespace collapse, and the whole thing is length-capped. The page
+/// still inserts it as text, never as markup: defence in depth, not the defence.
+fn clean_notice(s: &str) -> String {
+    let spaced: String = s
+        .chars()
+        .map(|c| {
+            let bad = c.is_control()
+                || ('\u{200b}'..='\u{200f}').contains(&c)
+                || ('\u{202a}'..='\u{202e}').contains(&c)
+                || ('\u{7f}'..='\u{9f}').contains(&c);
+            if bad { ' ' } else { c }
+        })
+        .collect();
+    spaced.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(500).collect()
+}
+/// The live notice, or None when unset/expired/unparseable.
+fn get_notice(conn: &Connection) -> Option<serde_json::Value> {
+    let raw = get_setting(conn, "notice")?;
+    if raw.is_empty() {
+        return None;
+    }
+    let n: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let text = n.get("text").and_then(|v| v.as_str()).unwrap_or("");
+    if text.is_empty() {
+        return None;
+    }
+    let until = n.get("until").and_then(|v| v.as_i64()).unwrap_or(0);
+    if until > 0 && until <= now() {
+        return None;
+    }
+    let level = n.get("level").and_then(|v| v.as_str()).unwrap_or("info");
+    let level = if NOTICE_LEVELS.contains(&level) { level } else { "info" };
+    Some(json!({ "text": text, "level": level, "until": until }))
+}
+
 #[allow(clippy::too_many_arguments)]
 /// In-memory per-IP request throttle (audit F12, parity with the Worker's Durable
 /// Object limiter): a fixed window of 20 requests / 60s per IP, checked before any DB
@@ -772,6 +813,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/admin/login", post(admin_login))
         .route("/api/admin/stats", get(admin_stats))
         .route("/api/admin/toggle", post(admin_toggle))
+        .route("/api/admin/notice", post(admin_notice))
         .route("/api/admin/clear-logs", post(admin_clear_logs))
         .route("/api/admin/clear-builds", post(admin_clear_builds))
         .route("/api/admin/reset-limits", post(admin_reset_limits))
@@ -851,6 +893,8 @@ async fn get_stats(State(st): State<AppState>, Query(q): Query<RefQuery>, header
         .optional().ok().flatten();
     let you = latest_user_build(&conn, &st.cfg, &uid, now_ts);
     let enabled = builds_enabled(&conn);
+    // The expiry is admin bookkeeping, so the public payload carries only what it renders.
+    let notice = get_notice(&conn).map(|n| json!({ "text": n["text"], "level": n["level"] }));
     // Embedded status of the caller's tracked build (?my=<id>), so the page needs one
     // request per poll instead of stats + status. JSON null = unknown/expired-and-purged.
     let my_build = if q.my.is_empty() {
@@ -867,6 +911,7 @@ async fn get_stats(State(st): State<AppState>, Query(q): Query<RefQuery>, header
         "retention_secs": lim.retention,
         "avg_build_secs": avg.map(|v| v.round() as i64),
         "builds_enabled": enabled,
+        "notice": notice,
         "commit": commit,
         "version": version_string(),
         "you": you,
@@ -1289,6 +1334,9 @@ async fn admin_stats(State(st): State<AppState>, headers: HeaderMap) -> Response
     let recent_events = query_recent_events(&conn, 60);
     let enabled = builds_enabled(&conn);
     let manage_users = admin_can(&conn, &me, "manage_users");
+    let edit_notice = admin_can(&conn, &me, "edit_notice");
+    // With the expiry, unlike the public payload: the card shows when it clears itself.
+    let notice = get_notice(&conn);
     drop(conn);
     Json(json!({
         "builds_enabled": enabled,
@@ -1322,8 +1370,45 @@ async fn admin_stats(State(st): State<AppState>, headers: HeaderMap) -> Response
         "me": me,
         "master": master,
         "manage_users": manage_users,
+        "edit_notice": edit_notice,
+        "notice": notice,
     }))
     .into_response()
+}
+
+/// Post or clear the single public notice banner. Empty text clears it, so the panel's
+/// Clear button is just a post with no text. One notice exists at a time by construction:
+/// it is one settings row, independent of the builds-disabled banner.
+async fn admin_notice(State(st): State<AppState>, headers: HeaderMap, body: axum::body::Bytes) -> Response {
+    let Some(identity) = session_admin(&headers, &st) else {
+        return json_err(StatusCode::UNAUTHORIZED, "admin auth required");
+    };
+    let Ok(body) = serde_json::from_slice::<serde_json::Value>(&body) else {
+        return json_err(StatusCode::BAD_REQUEST, "bad request");
+    };
+    let conn = st.db.lock();
+    if !admin_can(&conn, &identity, "edit_notice") {
+        drop(conn);
+        return json_err(StatusCode::FORBIDDEN, "not permitted");
+    }
+    let text = clean_notice(body.get("text").and_then(|v| v.as_str()).unwrap_or(""));
+    if text.is_empty() {
+        set_setting(&conn, "notice", "");
+        log_event(&conn, "admin_notice", None, None, None, "notice cleared", None);
+        drop(conn);
+        return Json(json!({ "ok": true, "notice": serde_json::Value::Null })).into_response();
+    }
+    let level = body.get("level").and_then(|v| v.as_str()).unwrap_or("info");
+    let level = if NOTICE_LEVELS.contains(&level) { level } else { "info" };
+    // hours <= 0 or absent means no expiry; the cap keeps a typo from parking a banner for years.
+    let hours = body.get("hours").and_then(|v| v.as_i64()).unwrap_or(0);
+    let until = if hours > 0 { now() + hours.min(720) * 3600 } else { 0 };
+    let notice = json!({ "text": text, "level": level, "until": until });
+    set_setting(&conn, "notice", &notice.to_string());
+    let detail = if until > 0 { format!("notice set ({level}, {hours}h)") } else { format!("notice set ({level}, no expiry)") };
+    log_event(&conn, "admin_notice", None, None, None, &detail, None);
+    drop(conn);
+    Json(json!({ "ok": true, "notice": notice })).into_response()
 }
 
 #[derive(Deserialize)]
@@ -1694,7 +1779,7 @@ async fn admin_set_privileges(State(st): State<AppState>, headers: HeaderMap, Pa
     if let Some(arr) = body.get("privileges").and_then(|v| v.as_array()) {
         for item in arr {
             if let Some(s) = item.as_str() {
-                if matches!(s, "clear_logs" | "clear_builds" | "reset_limits" | "edit_limits" | "kill_switch" | "manage_users") && !privs.iter().any(|p| p == s) {
+                if matches!(s, "clear_logs" | "clear_builds" | "reset_limits" | "edit_limits" | "kill_switch" | "manage_users" | "edit_notice") && !privs.iter().any(|p| p == s) {
                     privs.push(s.to_string());
                 }
             }
