@@ -493,12 +493,24 @@ fn new_totp_secret() -> String {
     base32_encode(&rand_bytes(20))
 }
 
-const PBKDF2_ITERS: u32 = 100_000;
+// OWASP-recommended work factor for PBKDF2-HMAC-SHA256. This is the VPS broker, which has
+// no per-request CPU limit, so it can afford it. The Cloudflare Worker deliberately stays
+// at 100k: one verify there already costs ~24ms, right at the free plan's tolerated CPU
+// envelope, and 600k would blow the budget (login 1102s). Each hash stores its own
+// iteration count, so the two backends stay format-compatible despite the different value.
+const PBKDF2_ITERS: u32 = 600_000;
 /// A syntactically valid but unmatchable PBKDF2 hash ("iters.saltB64.hashB64") with the
-/// same iteration count as real hashes. `verify_password` against it runs the full PBKDF2
-/// work and always fails — used on the absent/disabled/unenrolled login paths so response
-/// timing doesn't reveal whether a username exists (constant-time username enumeration guard).
-const DUMMY_PW_HASH: &str = "100000.AAAAAAAAAAAAAAAAAAAAAA==.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+/// same iteration count as freshly written real hashes. `verify_password` against it runs
+/// the full PBKDF2 work and always fails, used on the absent/disabled/unenrolled login
+/// paths so response timing doesn't reveal whether a username exists. Its iteration prefix
+/// MUST track PBKDF2_ITERS, or a wrong-password on a real (current-count) account would take
+/// measurably longer than on a missing one, handing back the username-enumeration oracle.
+const DUMMY_PW_HASH: &str = "600000.AAAAAAAAAAAAAAAAAAAAAA==.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+/// The PBKDF2 iteration count baked into a stored "iters.saltB64.hashB64" hash (0 if it
+/// won't parse), so a hash written before a work-factor raise can be spotted and upgraded.
+fn hash_iters(stored: &str) -> u32 {
+    stored.split('.').next().and_then(|s| s.parse().ok()).unwrap_or(0)
+}
 fn pbkdf2_sha256(password: &[u8], salt: &[u8], iters: u32) -> [u8; 32] {
     use pbkdf2::pbkdf2_hmac;
     use sha2::Sha256;
@@ -1241,6 +1253,13 @@ async fn admin_login(
                     "UPDATE admins SET last_login=?2, last_totp_step=?3 WHERE username=?1",
                     rusqlite::params![u, now(), step as i64],
                 ).ok();
+                // Opportunistic work-factor upgrade: if this hash predates a raise in
+                // PBKDF2_ITERS, re-hash the just-verified password at the current cost. Only
+                // fires once per account (next login it already matches). No CPU limit here.
+                if hash_iters(pw_hash) < PBKDF2_ITERS {
+                    let rehashed = hash_password(&body.password);
+                    conn.execute("UPDATE admins SET pw_hash=?2 WHERE username=?1", rusqlite::params![u, rehashed]).ok();
+                }
                 Some(u)
             }
             _ => None,
@@ -2537,5 +2556,35 @@ async fn delete_release_assets(st: &AppState, build_id: &str) -> anyhow::Result<
         Ok(())
     } else {
         anyhow::bail!("some asset deletes failed for {build_id}")
+    }
+}
+
+#[cfg(test)]
+mod pbkdf2_tests {
+    use super::*;
+    // A hash written before the work-factor raise (100k) must still verify after it, or
+    // every existing admin is locked out. verify_password reads the count from the hash,
+    // so this must hold regardless of the current PBKDF2_ITERS.
+    #[test]
+    fn old_hashes_still_verify_and_upgrade() {
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        // Forge a 100k-iteration hash for "hunter2hunter2" exactly as the old code would.
+        let salt = [7u8; 16];
+        let old = format!("100000.{}.{}", STANDARD.encode(salt),
+            STANDARD.encode(pbkdf2_sha256(b"hunter2hunter2", &salt, 100_000)));
+        assert!(verify_password("hunter2hunter2", &old), "old 100k hash must still verify");
+        assert!(!verify_password("wrong-password", &old), "wrong password must fail");
+        assert_eq!(hash_iters(&old), 100_000);
+        assert!(hash_iters(&old) < PBKDF2_ITERS, "old hash is below current -> would upgrade");
+
+        // A freshly written hash carries the current count and verifies.
+        let fresh = hash_password("hunter2hunter2");
+        assert_eq!(hash_iters(&fresh), PBKDF2_ITERS, "new hash uses the raised count");
+        assert!(verify_password("hunter2hunter2", &fresh));
+        assert!(hash_iters(&fresh) >= PBKDF2_ITERS, "fresh hash needs no upgrade");
+
+        // The timing dummy must carry the current count too (enumeration guard).
+        assert_eq!(hash_iters(DUMMY_PW_HASH), PBKDF2_ITERS, "dummy must track PBKDF2_ITERS");
+        assert!(!verify_password("anything", DUMMY_PW_HASH), "dummy never matches");
     }
 }
