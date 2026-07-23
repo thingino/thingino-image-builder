@@ -259,9 +259,18 @@ window.addEventListener('i18nchange',function(){
   setMaster(masterMode);
   if($('app').style.display!=='none'){ refresh(); if(usersShown) renderUsers(); }
 });
+// Footer version on the gate/enroll screens too, so the login page shows it like the
+// signed-in footer does. Those screens never call the authed admin stats, so read it from
+// the public /api/stats. Skipped once the app is up, where refresh() owns the footer
+// version (and on the VPS backend deliberately blanks it in favour of the version card).
+async function gateVersion(){
+  if($('app').style.display!=='none') return;
+  try{ const r=await fetch(API+'/api/stats'); const d=await r.json(); if(d&&d.version&&$('app').style.display==='none') $('admin-ver').textContent=d.version; }catch(_){}
+}
 const inviteParam=new URLSearchParams(location.search).get('invite');
 if(inviteParam){ startEnroll(inviteParam); }
 else if(tok()&&!idledOut()){ adminGet().then(show).catch(e=>{ if(e&&e.auth) localStorage.removeItem(TK); else show(); }); }
+gateVersion();
 // Poll gently: 10s, and not at all while the tab is hidden (idle background admin tabs
 // were burning the free request quota); refresh immediately when the tab comes back.
 setInterval(()=>{ if(document.hidden) return; if($('app').style.display!=='none'&&!idledOut()) refresh(); },10000);
