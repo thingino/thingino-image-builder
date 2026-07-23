@@ -687,6 +687,11 @@ function base32Encode(bytes) {
 const newTotpSecret = () => base32Encode(randBytes(20));
 const bytesToB64 = (u8) => btoa(String.fromCharCode(...u8));
 const b64ToBytes = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+// Do NOT raise this on the Worker. One PBKDF2 verify at 100k already costs ~24ms, and the
+// Cloudflare free plan bills CPU time with a ~10ms target (measured tolerance ~26ms); every
+// login pays it. 600k (OWASP's number) would be ~120ms and trip the CPU limit (login 1102s)
+// and burn the CPU budget. The VPS broker, which has no per-request CPU cap, uses 600k. Each
+// hash records its own iteration count, so raising the broker's value stays compatible here.
 const PBKDF2_ITERS = 100000;
 // A fixed, well-formed dummy hash ("iters.saltB64.hashB64") to verify against when an
 // admin row is missing/disabled/unenrolled, so login timing can't enumerate usernames.
