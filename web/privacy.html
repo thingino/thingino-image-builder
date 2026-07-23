@@ -27,6 +27,16 @@
     .muted { color:#8b949e !important; }
     a { color:#ff9e2c; }
     @media (max-width:576px){ body{ padding:.5rem !important; } }
+    /* Inside the builder's overlay iframe (?embed=1): this card becomes the dialog itself,
+       so it fills the frame edge-to-edge (the iframe's corner radius crops it) and the back
+       link goes away (the overlay has its own close button). privacy.js sets the class. */
+    /* min-height:auto so the parent can measure the true content height and shrink-wrap
+       the dialog: with the page's own 100vh floor, the body always fills the frame and
+       the measurement could never come in under it. */
+    body.embed { padding:0 !important; background:var(--bs-card-bg); min-height:auto; }
+    body.embed .doc-card { max-width:none; }
+    body.embed .doc-card > .card { border:0; border-radius:0; margin-bottom:0 !important; }
+    body.embed .back-link { display:none; }
   </style>
 </head>
 <body class="p-3">
@@ -34,7 +44,7 @@
     <div class="card mb-3">
       <div class="card-header d-flex align-items-center gap-2 flex-wrap">
         <h1 class="card-title mb-0 fs-5"><i class="bi bi-shield-check me-1"></i> Privacy Policy</h1>
-        <a href="index.html" class="ms-auto small link-secondary text-decoration-none"><i class="bi bi-arrow-left me-1"></i>back to the builder</a>
+        <a href="index.html" class="back-link ms-auto small link-secondary text-decoration-none"><i class="bi bi-arrow-left me-1"></i>back to the builder</a>
       </div>
       <div class="card-body">
         <p class="muted small mb-3">thingino Firmware Builder, last updated 30 June 2026</p>

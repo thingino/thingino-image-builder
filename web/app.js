@@ -381,6 +381,8 @@
     if(sel&&REFS.includes(sel.value)&&sel.value!==curRef){ curRef=sel.value; localStorage.setItem(REF_KEY,curRef); linkProbed=false; loadBoards(); wake(true); syncUrl(); }
     closeSettings();
   }
+  // Privacy opens in an overlay: markup in index.html, wiring shared with the admin page
+  // in privacy-modal.js (loaded before this file).
   $('settings-btn').addEventListener('click',openSettings);
   $('settings-cancel').addEventListener('click',closeSettings);
   $('settings-save').addEventListener('click',saveSettings);

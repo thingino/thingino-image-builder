@@ -2,6 +2,9 @@
 // privacy page never drifts from the actual /api/stats value. Keeps the static
 // number already in the HTML as a fallback if the fetch fails or is blocked.
 (function () {
+  // ?embed=1 = we're inside the builder page's overlay iframe: the modal supplies the
+  // chrome, so hide this page's own back link (CSS keys off the class).
+  if (new URLSearchParams(location.search).has("embed")) document.body.classList.add("embed");
   var API = window.API_BASE || "";
   fetch(API + "/api/stats")
     .then(function (r) { return r.json(); })

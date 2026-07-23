@@ -191,8 +191,18 @@
 <!-- Footer mirroring the builder page's: the way back, the repo, privacy. Deliberately
      outside #gate/#app/#enroll so it is reachable whether or not anyone is signed in. -->
 <p class="mt-3 small text-center muted">
-  <a href="index.html" class="link-secondary text-decoration-none"><i class="bi bi-arrow-left me-1"></i><span data-i18n="builder_link">builder</span></a> · <a href="https://github.com/thingino/thingino-image-builder" target="_blank" class="link-secondary text-decoration-none" data-i18n="footer_link">thingino image builder</a> <span id="admin-ver" class="muted"></span> · <a href="privacy.html" class="link-secondary text-decoration-none"><span data-i18n="privacy_link">privacy</span></a>
+  <a href="index.html" class="link-secondary text-decoration-none"><i class="bi bi-arrow-left me-1"></i><span data-i18n="builder_link">builder</span></a> · <a href="https://github.com/thingino/thingino-image-builder" target="_blank" class="link-secondary text-decoration-none" data-i18n="footer_link">thingino image builder</a> <span id="admin-ver" class="muted"></span> · <a href="privacy.html" id="privacy-link" class="link-secondary text-decoration-none"><span data-i18n="privacy_link">privacy</span></a>
 </p>
+
+<!-- Privacy policy in an overlay (wired by privacy-modal.js, shared with the builder page).
+     The page inside renders its own card, which in embed mode IS the dialog; only the
+     close button floats above it. -->
+<div id="privacy-overlay" class="d-none" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1050;display:flex;align-items:center;justify-content:center;padding:1rem;">
+  <div style="position:relative;width:100%;max-width:760px;height:88vh;">
+    <button type="button" id="privacy-close" class="btn-close btn-close-white" style="position:absolute;top:.5rem;right:1rem;z-index:2"></button>
+    <iframe id="privacy-frame" title="Privacy Policy" style="border:0;width:100%;height:100%;background:#0d1117;border-radius:var(--bs-border-radius);box-shadow:0 .5rem 2rem rgba(0,0,0,.6);"></iframe>
+  </div>
+</div>
 
 <script src="i18n.js"></script>
 <script src="i18n-adm-en.js"></script>
@@ -211,6 +221,7 @@
 <script src="i18n-adm-ar.js"></script>
 <script src="i18n-adm-ko.js"></script>
 <script src="config.js"></script>
+<script src="privacy-modal.js"></script>
 <script src="admin.js"></script>
 </body>
 </html>
