@@ -145,7 +145,9 @@ the **Sign out** button.
 **Open to any admin**: cancel any build, remove a finished build's artifact + run
 early, live stats / recent builds + events.
 
-**Privilege-gated**: the **kill switch** (enable/disable builds), edit **limits**
+**Privilege-gated**: the **kill switch** (enable/disable builds), the **notice
+banner** (`edit_notice`: one notice at a time on the builder page, info/warning/
+danger, optional 1h/6h/24h/72h auto-expiry, empty text clears it), edit **limits**
 (live, no redeploy, usage shown), **clear logs**, **clear finished builds**, **reset
 limits**: a named admin can run each only if granted that privilege (new admins
 start with **none**); the master always can, and grants them via checkboxes in the

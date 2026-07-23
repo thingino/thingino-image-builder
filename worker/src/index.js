@@ -16,7 +16,7 @@ const WINDOW = 3600;
 const DAY = 86400;
 // Per-admin privileged actions. Named admins are granted a subset; the master always
 // has all of them. Everything else in the admin panel stays open to any admin.
-const ADMIN_PRIVS = ["clear_logs", "clear_builds", "reset_limits", "edit_limits", "kill_switch", "manage_users"];
+const ADMIN_PRIVS = ["clear_logs", "clear_builds", "reset_limits", "edit_limits", "kill_switch", "manage_users", "edit_notice"];
 
 const nowSec = () => Math.floor(Date.now() / 1000);
 const uuid = () => crypto.randomUUID();
@@ -214,6 +214,31 @@ async function fetchDefconfigs(env, repo, commit) {
   return [...new Set([...a, ...b])].sort();
 }
 
+// ---- notice banner --------------------------------------------------------
+// An admin-posted banner for the builder page, kept in ONE settings row ({text, level,
+// until}) so a stats poll costs a single read. until=0 stays up until cleared; an
+// expired notice is filtered here rather than swept, so nothing has to run to hide it.
+const NOTICE_LEVELS = ["info", "warning", "danger"];
+// The text is admin-typed and lands on a public page, so it is normalised on the way in:
+// controls and bidi overrides (which could visually spoof the rest of the banner) become
+// spaces, runs of whitespace collapse, and the whole thing is length-capped. The page
+// still inserts it as text, never as markup: defence in depth, not the defence.
+const cleanNotice = (s) =>
+  String(s == null ? "" : s)
+    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 500);
+async function getNotice(env) {
+  const raw = await getSetting(env, "notice");
+  if (!raw) return null;
+  let n;
+  try { n = JSON.parse(raw); } catch { return null; }
+  if (!n || !n.text) return null;
+  if (n.until && n.until <= nowSec()) return null;
+  return { text: n.text, level: NOTICE_LEVELS.includes(n.level) ? n.level : "info", until: n.until || 0 };
+}
+
 // ---- API handlers ---------------------------------------------------------
 async function handleDefconfigs(env, ref) {
   const { list } = await resolveThingino(env, ref);
@@ -224,6 +249,8 @@ async function handleStats(request, env, ref, my) {
   const { commit } = await resolveThingino(env, ref);
   const cfg = await limits(env);
   const avg = await env.DB.prepare("SELECT avg(finished_ts - dispatched_ts) a FROM builds WHERE (outcome='done' OR (outcome IS NULL AND state='done')) AND finished_ts IS NOT NULL AND dispatched_ts IS NOT NULL").first();
+  // The expiry is admin bookkeeping, so the public payload carries only what it renders.
+  const notice = await getNotice(env);
   return json({
     running: await countQ(env, "SELECT count(*) c FROM builds WHERE state='running'"),
     queued: await countQ(env, "SELECT count(*) c FROM builds WHERE state='queued'"),
@@ -232,6 +259,7 @@ async function handleStats(request, env, ref, my) {
     retention_secs: cfg.retention,
     avg_build_secs: avg && avg.a ? Math.round(avg.a) : null,
     builds_enabled: (await getSetting(env, "builds_enabled")) !== "0",
+    notice: notice ? { text: notice.text, level: notice.level } : null,
     commit,
     version: env.VERSION || "v0.1.0",
     uid,
@@ -884,6 +912,8 @@ async function handleAdminStats(request, env) {
   }));
   return json({
     builds_enabled: (await getSetting(env, "builds_enabled")) !== "0",
+    // With the expiry, unlike the public payload: the card shows when it clears itself.
+    notice: await getNotice(env),
     counts,
     last24h: await countQ(env, "SELECT count(*) c FROM builds WHERE created_ts > ?", nowSec() - DAY),
     total_done: parseInt((await getSetting(env, "total_done")) || "0", 10),
@@ -900,7 +930,32 @@ async function handleAdminStats(request, env) {
     repo: env.GITHUB_REPO || null,
     version: env.VERSION || "v0.1.0", latest_version: null, update_available: false,
     me, master: me === "master", manage_users: await adminCan(env, me, "manage_users"),
+    edit_notice: await adminCan(env, me, "edit_notice"),
   }, 200, env);
+}
+// Post or clear the single public notice banner. Empty text clears it, so the panel's
+// Clear button is just a post with no text. One notice exists at a time by construction:
+// it is one settings row, independent of the builds-disabled banner.
+async function handleAdminNotice(request, env) {
+  const who = await sessionAdmin(request, env);
+  if (!who) return json({ error: "admin auth required" }, 401, env);
+  if (!(await adminCan(env, who, "edit_notice"))) return json({ error: "not permitted" }, 403, env);
+  let body;
+  try { body = await request.json(); } catch { return json({ error: "bad request" }, 400, env); }
+  const text = cleanNotice(body.text);
+  if (!text) {
+    await setSetting(env, "notice", "");
+    await logEvent(env, "admin_notice", null, null, null, "notice cleared");
+    return json({ ok: true, notice: null }, 200, env);
+  }
+  const level = NOTICE_LEVELS.includes(body.level) ? body.level : "info";
+  // hours <= 0 or absent means no expiry; the cap keeps a typo from parking a banner for years.
+  const hours = parseInt(body.hours, 10);
+  const until = Number.isFinite(hours) && hours > 0 ? nowSec() + Math.min(hours, 720) * 3600 : 0;
+  const notice = { text, level, until };
+  await setSetting(env, "notice", JSON.stringify(notice));
+  await logEvent(env, "admin_notice", null, null, null, `notice set (${level}, ${until ? `${hours}h` : "no expiry"})`);
+  return json({ ok: true, notice }, 200, env);
 }
 async function handleAdminToggle(request, env) {
   const who = await sessionAdmin(request, env);
@@ -1014,6 +1069,7 @@ export default {
       if (p === "/api/admin/login" && request.method === "POST") return await handleAdminLogin(request, env);
       if (p === "/api/admin/stats" && request.method === "GET") return await handleAdminStats(request, env);
       if (p === "/api/admin/toggle" && request.method === "POST") return await handleAdminToggle(request, env);
+      if (p === "/api/admin/notice" && request.method === "POST") return await handleAdminNotice(request, env);
       if (p === "/api/admin/clear-logs" && request.method === "POST") return await handleAdminClearLogs(request, env);
       if (p === "/api/admin/clear-builds" && request.method === "POST") return await handleAdminClearBuilds(request, env);
       if (p === "/api/admin/reset-limits" && request.method === "POST") return await handleAdminResetLimits(request, env);
