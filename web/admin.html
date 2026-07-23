@@ -90,8 +90,29 @@
     <span class="small muted ms-auto" id="kill-extra"></span>
   </div></div>
 
+  <div class="card mb-3"><div class="card-body d-flex align-items-center gap-3 flex-wrap">
+    <div><span data-i18n="version_label">Version</span> <code id="ver">…</code> <span id="upd-badge"></span></div>
+    <button id="upd-btn" class="btn btn-sm btn-thingino" style="display:none" data-i18n="update_now">Update now</button>
+    <span class="small muted ms-auto" id="upd-extra"></span>
+  </div></div>
+
+  <div class="card mb-3" id="users-card" style="display:none"><div class="card-body">
+    <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
+      <span class="small muted text-uppercase" data-i18n="users_title">Admin users</span>
+      <div class="input-group input-group-sm ms-auto" style="max-width:340px">
+        <input id="invite-user" class="form-control" placeholder="new username" data-i18n-ph="invite_user_ph">
+        <button id="invite-btn" class="btn btn-thingino" data-i18n="invite_btn">Invite</button>
+      </div>
+    </div>
+    <div id="invite-link" class="small mb-2"></div>
+    <div class="table-responsive"><table class="table table-sm align-middle mb-0">
+      <thead><tr><th data-i18n="th_username">username</th><th data-i18n="th_state">state</th><th data-i18n="th_last_login">last login</th><th data-i18n="th_privileges">privileges</th><th></th></tr></thead>
+      <tbody id="users-body"></tbody>
+    </table></div>
+  </div></div>
+
   <!-- One notice at a time, separate from the builds-disabled banner. Hidden unless this
-       admin holds edit_notice (or is master), like the users card. -->
+       admin holds edit_notice (or is master), like the users card above it. -->
   <div class="card mb-3" id="notice-card" style="display:none"><div class="card-body">
     <h2 class="card-title fs-6 mb-1"><i class="bi bi-megaphone me-1"></i> <span data-i18n="notice_title">Notice banner</span></h2>
     <div class="small muted mb-2" data-i18n="notice_hint">Shown to every visitor on the builder page, exactly as written, in whatever language you write it.</div>
@@ -120,27 +141,6 @@
       <span class="small muted ms-auto" id="notice-msg"></span>
     </div>
     <div class="small mt-2" id="notice-state"></div>
-  </div></div>
-
-  <div class="card mb-3"><div class="card-body d-flex align-items-center gap-3 flex-wrap">
-    <div><span data-i18n="version_label">Version</span> <code id="ver">…</code> <span id="upd-badge"></span></div>
-    <button id="upd-btn" class="btn btn-sm btn-thingino" style="display:none" data-i18n="update_now">Update now</button>
-    <span class="small muted ms-auto" id="upd-extra"></span>
-  </div></div>
-
-  <div class="card mb-3" id="users-card" style="display:none"><div class="card-body">
-    <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
-      <span class="small muted text-uppercase" data-i18n="users_title">Admin users</span>
-      <div class="input-group input-group-sm ms-auto" style="max-width:340px">
-        <input id="invite-user" class="form-control" placeholder="new username" data-i18n-ph="invite_user_ph">
-        <button id="invite-btn" class="btn btn-thingino" data-i18n="invite_btn">Invite</button>
-      </div>
-    </div>
-    <div id="invite-link" class="small mb-2"></div>
-    <div class="table-responsive"><table class="table table-sm align-middle mb-0">
-      <thead><tr><th data-i18n="th_username">username</th><th data-i18n="th_state">state</th><th data-i18n="th_last_login">last login</th><th data-i18n="th_privileges">privileges</th><th></th></tr></thead>
-      <tbody id="users-body"></tbody>
-    </table></div>
   </div></div>
 
   <div class="card mb-3"><div class="card-body">
