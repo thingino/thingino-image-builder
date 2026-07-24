@@ -121,16 +121,21 @@ jobs:
           curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
           echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null
 
-      # Same dependency list as thingino-firmware's nightly, which builds every board on
-      # it daily; our old copy carried a pile of packages nothing here uses.
+      # thingino's own Makefile checks for a required-package list and, if anything is
+      # missing, PROMPTS to install it — which on CI means the build dies at `make update`
+      # with "Installation aborted by the user". So this list must be a superset of what
+      # that check wants (shfmt, nodejs, npm, ccache, libcrypt-dev, libusb-1.0-0-dev,
+      # vim-tiny, whiptail included); it is deliberately larger than the one in
+      # firmware-master.yaml, whose runners get some of these from the image.
       - name: Install build dependencies
         run: |
           set -eux
           apt-get update
           apt-get install -y --no-install-recommends --no-install-suggests \
-            autoconf build-essential bc cmake cpio curl ca-certificates file git gh make gawk jq \
-            lzop m4 p7zip-full perl python3 python3-setuptools procps rsync tzdata u-boot-tools \
-            unzip wget libncurses-dev swig python3-dev libssl-dev
+            autoconf bc bison build-essential ca-certificates ccache cmake cpio curl dialog \
+            file flex gawk gh git jq libcrypt-dev libncurses-dev libssl-dev libusb-1.0-0-dev lzop m4 \
+            make mtools nano nodejs npm p7zip-full parted perl procps python3 python3-dev \
+            python3-setuptools ripgrep rsync shfmt swig tzdata u-boot-tools unzip vim-tiny wget whiptail
 
       - name: Set timezone
         run: ln -sf "/usr/share/zoneinfo/${TZ}" /etc/localtime && echo "${TZ}" > /etc/timezone
