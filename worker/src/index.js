@@ -356,7 +356,7 @@ async function handleBuild(request, env) {
     const claim = await env.DB.prepare("UPDATE builds SET state='running', dispatched_ts=? WHERE id=? AND state='queued' AND (SELECT count(*) FROM builds WHERE state='running') < ?").bind(nowSec(), id, cfg.maxConcurrent).run();
     if ((claim.meta?.changes ?? 0) === 1) {
       try {
-        await dispatchBuild(env, id, defconfig, commit);
+        await dispatchBuild(env, id, defconfig, commit, ref);
         await logEvent(env, "dispatched", id, uid, ip, defconfig);
         state = "running";
       } catch (_) {
@@ -454,8 +454,10 @@ async function handleAdminExpire(id, request, env) {
 }
 
 // ---- scheduler (cron) -----------------------------------------------------
-async function dispatchBuild(env, id, defconfig, commit) {
-  const cp = { build_id: id, defconfig };
+async function dispatchBuild(env, id, defconfig, commit, ref) {
+  // ref rides along so CI can pick the matching upstream ccache channel and name the
+  // build branch; the workflow re-validates it against the same allow-list.
+  const cp = { build_id: id, defconfig, ref: normRef(ref) };
   if (commit) cp.commit = commit;
   const r = await ghFetch(env, `https://api.github.com/repos/${env.GITHUB_REPO}/dispatches`, {
     method: "POST",
@@ -527,7 +529,7 @@ async function schedulerWork(env, ts) {
   const running = ((await env.DB.prepare("SELECT id,run_id,dispatched_ts,cancel_requested FROM builds WHERE state='running'").all()).results) || [];
   const slots = Math.max(0, cfg.maxConcurrent - running.length);
   const queued = slots > 0
-    ? ((await env.DB.prepare("SELECT id,defconfig,commit_sha FROM builds WHERE state='queued' ORDER BY created_ts ASC LIMIT ?").bind(slots).all()).results) || []
+    ? ((await env.DB.prepare("SELECT id,defconfig,commit_sha,ref FROM builds WHERE state='queued' ORDER BY created_ts ASC LIMIT ?").bind(slots).all()).results) || []
     : [];
 
   const runs = running.length ? await fetchRuns(env) : [];
@@ -588,7 +590,7 @@ async function schedulerWork(env, ts) {
     const claim = await env.DB.prepare("UPDATE builds SET state='running', dispatched_ts=? WHERE id=? AND state='queued' AND (SELECT count(*) FROM builds WHERE state='running') < ?").bind(nowSec(), q.id, cfg.maxConcurrent).run();
     if ((claim.meta?.changes ?? 0) !== 1) continue;
     try {
-      await dispatchBuild(env, q.id, q.defconfig, q.commit_sha);
+      await dispatchBuild(env, q.id, q.defconfig, q.commit_sha, q.ref);
       await logEvent(env, "dispatched", q.id, null, null, q.defconfig);
     } catch (_) {
       // Release the claim back to queued, count the attempt, and fail after 3 tries.
