@@ -117,6 +117,10 @@ struct AppState {
     request_limiter: Arc<Mutex<std::collections::HashMap<String, (i64, u32)>>>,
     installation_token: Arc<Mutex<(Option<String>, i64)>>,
     latest_release: Arc<Mutex<(Option<String>, i64)>>,
+    // MaxMind GeoLite2 reader (GEOIP_DB env), for the origin-country column. The Worker
+    // twin gets this for free from Cloudflare's edge (request.cf.country); this broker
+    // fronts no CDN, so a local database is the only way to answer the same question.
+    geoip: Option<Arc<maxminddb::Reader<Vec<u8>>>>,
 }
 
 fn env_or(key: &str, default: &str) -> String {
@@ -324,6 +328,31 @@ fn log_event(
     let _ = conn.execute(
         "INSERT INTO events(ts, kind, build_id, uid, ip_bucket, ip_full, detail) VALUES (?1,?2,?3,?4,?5,?6,?7)",
         rusqlite::params![now(), kind, build_id, uid, ip, ip_full, detail],
+    );
+    tracing::info!("event {kind}: {detail}");
+}
+
+/// ISO country code for a client address, when a GeoLite2 database is configured.
+fn ip_country(st: &AppState, ip: std::net::IpAddr) -> Option<String> {
+    let c: maxminddb::geoip2::Country = st.geoip.as_ref()?.lookup(ip).ok()?;
+    c.country?.iso_code.map(str::to_string)
+}
+/// log_event plus the origin country, for the few request-context call sites; everything
+/// else keeps the plain 7-arg log_event and writes NULL country.
+#[allow(clippy::too_many_arguments)]
+fn log_event_geo(
+    conn: &Connection,
+    kind: &str,
+    build_id: Option<&str>,
+    uid: Option<&str>,
+    ip: Option<&str>,
+    detail: &str,
+    ip_full: Option<&str>,
+    country: Option<&str>,
+) {
+    let _ = conn.execute(
+        "INSERT INTO events(ts, kind, build_id, uid, ip_bucket, ip_full, detail, country) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+        rusqlite::params![now(), kind, build_id, uid, ip, ip_full, detail, country],
     );
     tracing::info!("event {kind}: {detail}");
 }
@@ -845,6 +874,8 @@ async fn main() -> anyhow::Result<()> {
     let _ = conn.execute("ALTER TABLE events ADD COLUMN ip_full TEXT", []);
     let _ = conn.execute("ALTER TABLE admins ADD COLUMN privileges TEXT", []);
     let _ = conn.execute("ALTER TABLE admins ADD COLUMN last_totp_step INTEGER", []);
+    let _ = conn.execute("ALTER TABLE builds ADD COLUMN country TEXT", []);
+    let _ = conn.execute("ALTER TABLE events ADD COLUMN country TEXT", []);
 
     let http = reqwest::Client::builder()
         .user_agent("thingino-image-builder-broker")
@@ -862,6 +893,15 @@ async fn main() -> anyhow::Result<()> {
         request_limiter: Arc::new(Mutex::new(std::collections::HashMap::new())),
         installation_token: Arc::new(Mutex::new((None, 0))),
         latest_release: Arc::new(Mutex::new((None, 0))),
+        // Fail loud on a set-but-unreadable database, like TOTP_ENC_KEY: silently starting
+        // without geo when the operator configured it would just look like a bug later.
+        geoip: match std::env::var("GEOIP_DB").ok().filter(|s| !s.is_empty()) {
+            Some(path) => Some(Arc::new(
+                maxminddb::Reader::open_readfile(&path)
+                    .map_err(|e| anyhow::anyhow!("GEOIP_DB {path}: {e}"))?,
+            )),
+            None => None,
+        },
     };
 
     {
@@ -1017,6 +1057,7 @@ async fn post_build(
     let client = client_ip(&headers, peer, &st.cfg.ip_header);
     let ip_full = client.to_string();
     let ip = ip_bucket(client);
+    let country = ip_country(&st, client);
     // F12: cheap per-IP request throttle in front of the DB work (parity with the
     // Worker's Durable Object limiter) — a flood can't hammer the broker.
     if !request_rate_ok(&st, &ip) {
@@ -1038,7 +1079,7 @@ async fn post_build(
         // Dedup: same (defconfig, commit) already built (within retention) or in flight → reuse it.
         if let Some(c) = commit.as_deref() {
             if let Some((eid, estate, edl)) = find_existing(&conn, &defconfig, c, now_ts - lim.retention, &st.cfg) {
-                log_event(&conn, "dedup", Some(&eid), Some(&uid), Some(&ip), &format!("reused {estate} for {defconfig}"), Some(&ip_full));
+                log_event_geo(&conn, "dedup", Some(&eid), Some(&uid), Some(&ip), &format!("reused {estate} for {defconfig}"), Some(&ip_full), country.as_deref());
                 return json_uid(StatusCode::OK, &uid, json!({
                     "build_id": eid,
                     "defconfig": defconfig,
@@ -1090,13 +1131,13 @@ async fn post_build(
             return json_uid(StatusCode::TOO_MANY_REQUESTS, &uid, json!({"error": "too many builds from your network this hour — try again later"}));
         }
         if let Err(e) = conn.execute(
-            "INSERT INTO builds(id, uid, ip_bucket, ip_full, defconfig, state, created_ts, commit_sha, ref) VALUES (?1,?2,?3,?4,?5,'queued',?6,?7,?8)",
-            rusqlite::params![build_id, uid, ip, ip_full, defconfig, now_ts, commit, git_ref],
+            "INSERT INTO builds(id, uid, ip_bucket, ip_full, defconfig, state, created_ts, commit_sha, ref, country) VALUES (?1,?2,?3,?4,?5,'queued',?6,?7,?8,?9)",
+            rusqlite::params![build_id, uid, ip, ip_full, defconfig, now_ts, commit, git_ref, country],
         ) {
             tracing::error!("insert failed: {e}");
             return json_err(StatusCode::INTERNAL_SERVER_ERROR, "internal error");
         }
-        log_event(&conn, "queued", Some(&build_id), Some(&uid), Some(&ip), &defconfig, Some(&ip_full));
+        log_event_geo(&conn, "queued", Some(&build_id), Some(&uid), Some(&ip), &defconfig, Some(&ip_full), country.as_deref());
         conn.query_row("SELECT count(*) FROM builds WHERE state='queued'", [], |r| r.get(0)).unwrap_or(1)
     };
 
@@ -1254,6 +1295,7 @@ async fn admin_login(
     let client = client_ip(&headers, peer, &st.cfg.ip_header);
     let ip_full = client.to_string();
     let ip = ip_bucket(client);
+    let country = ip_country(&st, client);
     // Throttle brute force: too many recent failures from this IP bucket → reject early.
     {
         let conn = st.db.lock();
@@ -1265,7 +1307,7 @@ async fn admin_login(
             )
             .unwrap_or(0);
         if fails >= LOGIN_FAIL_MAX {
-            log_event(&conn, "admin_login_throttled", None, None, Some(&ip), "too many failed logins", Some(&ip_full));
+            log_event_geo(&conn, "admin_login_throttled", None, None, Some(&ip), "too many failed logins", Some(&ip_full), country.as_deref());
             return json_err(StatusCode::TOO_MANY_REQUESTS, "too many attempts — try again later");
         }
     }
@@ -1369,7 +1411,7 @@ async fn admin_login(
             }
             None => "bad token or 2FA".to_string(),
         };
-        log_event(&conn, "admin_login_fail", None, None, Some(&ip), &detail, Some(&ip_full));
+        log_event_geo(&conn, "admin_login_fail", None, None, Some(&ip), &detail, Some(&ip_full), country.as_deref());
         return json_err(StatusCode::UNAUTHORIZED, "invalid credentials");
     };
 
@@ -1377,7 +1419,7 @@ async fn admin_login(
     st.sessions.lock().insert(session.clone(), (identity.clone(), now() + SESSION_TTL_SECS, now()));
     {
         let conn = st.db.lock();
-        log_event(&conn, "admin_login_ok", None, None, Some(&ip), &format!("session created ({identity})"), Some(&ip_full));
+        log_event_geo(&conn, "admin_login_ok", None, None, Some(&ip), &format!("session created ({identity})"), Some(&ip_full), country.as_deref());
     }
     let master = identity == "master";
     Json(json!({ "session": session, "expires_in": SESSION_TTL_SECS, "admin": identity, "master": master })).into_response()
@@ -2029,7 +2071,7 @@ fn latest_user_build(conn: &Connection, cfg: &Config, uid: &str, now_ts: i64) ->
 
 fn query_recent_builds(conn: &Connection, limit: i64) -> Vec<serde_json::Value> {
     let Ok(mut stmt) = conn.prepare(
-        "SELECT id, defconfig, state, created_ts, dispatched_ts, finished_ts, run_id, cancel_requested, uid, ip_bucket, ip_full, outcome, ref FROM builds ORDER BY created_ts DESC LIMIT ?1",
+        "SELECT id, defconfig, state, created_ts, dispatched_ts, finished_ts, run_id, cancel_requested, uid, ip_bucket, ip_full, outcome, ref, country FROM builds ORDER BY created_ts DESC LIMIT ?1",
     ) else {
         return vec![];
     };
@@ -2054,6 +2096,7 @@ fn query_recent_builds(conn: &Connection, limit: i64) -> Vec<serde_json::Value> 
             "uid": r.get::<_, String>(8)?,
             "ip": ip,
             "ip_bucket": ip_bucket,
+            "country": r.get::<_, Option<String>>(13)?,
         }))
     });
     match it {
@@ -2063,7 +2106,7 @@ fn query_recent_builds(conn: &Connection, limit: i64) -> Vec<serde_json::Value> 
 }
 
 fn query_recent_events(conn: &Connection, limit: i64) -> Vec<serde_json::Value> {
-    let Ok(mut stmt) = conn.prepare("SELECT ts, kind, build_id, detail, uid, ip_bucket, ip_full FROM events ORDER BY id DESC LIMIT ?1") else {
+    let Ok(mut stmt) = conn.prepare("SELECT ts, kind, build_id, detail, uid, ip_bucket, ip_full, country FROM events ORDER BY id DESC LIMIT ?1") else {
         return vec![];
     };
     let it = stmt.query_map([limit], |r| {
@@ -2078,6 +2121,7 @@ fn query_recent_events(conn: &Connection, limit: i64) -> Vec<serde_json::Value> 
             "uid": r.get::<_, Option<String>>(4)?,
             "ip": ip,
             "ip_bucket": ip_bucket,
+            "country": r.get::<_, Option<String>>(7)?,
         }))
     });
     match it {
