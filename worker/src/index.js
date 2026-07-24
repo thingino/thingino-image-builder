@@ -958,19 +958,25 @@ async function handleAcceptInvite(request, env) {
 async function handleAdminStats(request, env) {
   const me = await sessionAdmin(request, env);
   if (!me) return json({ error: "admin auth required" }, 401, env);
+  // ?all=builds / ?all=events / ?all=builds,events widens that table from the light
+  // default (newest 25 / 60) to effectively the whole 7-day retention window, clamped
+  // server-side so the panel can't request without bound. Independent per table, only
+  // for authenticated admins, and only while expanded.
+  const allOf = new Set(((new URL(request.url).searchParams.get("all")) || "").split(","));
+  const bLimit = allOf.has("builds") ? 500 : 25, eLimit = allOf.has("events") ? 1000 : 60;
   const cfg = await limits(env);
   const counts = {};
   for (const s of ["queued", "running", "done", "failed", "cancelled", "expired"])
     counts[s] = await countQ(env, "SELECT count(*) c FROM builds WHERE state=?", s);
   const avg = await env.DB.prepare("SELECT avg(finished_ts - dispatched_ts) a FROM builds WHERE (outcome='done' OR (outcome IS NULL AND state='done')) AND finished_ts IS NOT NULL AND dispatched_ts IS NOT NULL").first();
-  const builds = ((await env.DB.prepare("SELECT id,defconfig,ref,state,outcome,created_ts,dispatched_ts,finished_ts,run_id,cancel_requested,uid,ip_bucket,ip_full,country FROM builds ORDER BY created_ts DESC LIMIT 25").all()).results || []).map((b) => ({
+  const builds = ((await env.DB.prepare("SELECT id,defconfig,ref,state,outcome,created_ts,dispatched_ts,finished_ts,run_id,cancel_requested,uid,ip_bucket,ip_full,country FROM builds ORDER BY created_ts DESC LIMIT ?").bind(bLimit).all()).results || []).map((b) => ({
     build_id: b.id, defconfig: b.defconfig, ref: b.ref,
     state: b.state === "running" && b.cancel_requested ? "cancelling" : b.state,
     outcome: b.outcome,
     created_ts: b.created_ts, dispatched_ts: b.dispatched_ts, finished_ts: b.finished_ts, run_id: b.run_id, uid: b.uid,
     ip: b.ip_full || b.ip_bucket, ip_bucket: b.ip_bucket, country: b.country,
   }));
-  const events = ((await env.DB.prepare("SELECT ts,kind,build_id,detail,uid,ip_bucket,ip_full,country FROM events ORDER BY id DESC LIMIT 60").all()).results || []).map((e) => ({
+  const events = ((await env.DB.prepare("SELECT ts,kind,build_id,detail,uid,ip_bucket,ip_full,country FROM events ORDER BY id DESC LIMIT ?").bind(eLimit).all()).results || []).map((e) => ({
     ts: e.ts, kind: e.kind, build_id: e.build_id, detail: e.detail, uid: e.uid,
     ip: e.ip_full || e.ip_bucket, ip_bucket: e.ip_bucket, country: e.country,
   }));
@@ -980,6 +986,10 @@ async function handleAdminStats(request, env) {
     notice: await getNotice(env),
     counts,
     last24h: await countQ(env, "SELECT count(*) c FROM builds WHERE created_ts > ?", nowSec() - DAY),
+    // For the "showing latest N of M kept (7 days)" lines: the builds total is the sum of
+    // the state counts client-side; events need their own count. 7 matches the cron prune.
+    events_total: await countQ(env, "SELECT count(*) c FROM events"),
+    kept_days: 7,
     total_done: parseInt((await getSetting(env, "total_done")) || "0", 10),
     avg_build_secs: avg && avg.a ? Math.round(avg.a) : null,
     max_concurrent: cfg.maxConcurrent, retention_secs: cfg.retention,
