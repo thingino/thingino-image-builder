@@ -115,9 +115,13 @@ const getSetting = async (env, key) => {
 const setSetting = (env, key, value) =>
   env.DB.prepare("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
     .bind(key, value).run();
-const logEvent = (env, kind, build_id, uid, ip, detail, ipFull) =>
-  env.DB.prepare("INSERT INTO events(ts,kind,build_id,uid,ip_bucket,ip_full,detail) VALUES(?,?,?,?,?,?,?)")
-    .bind(nowSec(), kind, build_id || null, uid || null, ip || null, ipFull || null, detail || "").run();
+const logEvent = (env, kind, build_id, uid, ip, detail, ipFull, country) =>
+  env.DB.prepare("INSERT INTO events(ts,kind,build_id,uid,ip_bucket,ip_full,detail,country) VALUES(?,?,?,?,?,?,?,?)")
+    .bind(nowSec(), kind, build_id || null, uid || null, ip || null, ipFull || null, detail || "", country || null).run();
+// Where the request comes from, for the admin panel's IP columns. Cloudflare geo-tags
+// every request at the edge, so this is free: no lookup, no database, no MaxMind. "XX"
+// (unknown) and "T1" (Tor) are kept as-is; the panel just shows the code for those.
+const reqCountry = (request) => (request.cf && request.cf.country) || null;
 
 // ---- GitHub ---------------------------------------------------------------
 function ghHeaders(env, auth) {
@@ -301,7 +305,7 @@ async function handleBuild(request, env) {
        ORDER BY created_ts DESC LIMIT 1`
     ).bind(defconfig, commit, ts - cfg.retention).first();
     if (e) {
-      await logEvent(env, "dedup", e.id, uid, ip, `reused ${e.state} for ${defconfig}`, rawIp);
+      await logEvent(env, "dedup", e.id, uid, ip, `reused ${e.state} for ${defconfig}`, rawIp, reqCountry(request));
       const st = e.state === "running" && e.cancel_requested ? "cancelling" : e.state;
       return json({
         build_id: e.id, defconfig, state: st, deduped: true,
@@ -319,13 +323,13 @@ async function handleBuild(request, env) {
   // INSERT, so a concurrent burst can't slip past separate check-then-insert reads.
   const id = uuid();
   const ins = await env.DB.prepare(
-    `INSERT INTO builds(id,uid,ip_bucket,ip_full,defconfig,state,created_ts,commit_sha,ref)
-     SELECT ?,?,?,?,?,'queued',?,?,?
+    `INSERT INTO builds(id,uid,ip_bucket,ip_full,defconfig,state,created_ts,commit_sha,ref,country)
+     SELECT ?,?,?,?,?,'queued',?,?,?,?
      WHERE (SELECT count(*) FROM builds WHERE created_ts > ? AND ${notCancelledUndispatched}) < ?
        AND (SELECT count(*) FROM builds WHERE uid=? AND created_ts > ? AND ${notCancelledUndispatched}) < ?
        AND (SELECT count(*) FROM builds WHERE ip_bucket=? AND created_ts > ? AND ${notCancelledUndispatched}) < ?`
   ).bind(
-    id, uid, ip, rawIp, defconfig, ts, commit, ref,
+    id, uid, ip, rawIp, defconfig, ts, commit, ref, reqCountry(request),
     cutoff, cfg.globalHourly,
     uid, cutoff, cfg.userHourly,
     ip, cutoff, cfg.ipHourly,
@@ -341,7 +345,7 @@ async function handleBuild(request, env) {
       return json({ error: `you've reached ${cfg.userHourly} builds this hour — try again later` }, 429, env);
     return json({ error: "too many builds from your network this hour — try again later" }, 429, env);
   }
-  await logEvent(env, "queued", id, uid, ip, defconfig, rawIp);
+  await logEvent(env, "queued", id, uid, ip, defconfig, rawIp, reqCountry(request));
 
   // Inline dispatch: if a slot is free, fire the build NOW rather than waiting for
   // the next cron tick. The cron is only a fallback/reconciler for the rest.
@@ -796,7 +800,7 @@ async function handleAdminLogin(request, env) {
   const ip = ipBucket(rawIp);
   const fails = await countQ(env, "SELECT count(*) c FROM events WHERE kind='admin_login_fail' AND ip_bucket=? AND ts > ?", ip, nowSec() - 900);
   if (fails >= 10) {
-    await logEvent(env, "admin_login_throttled", null, null, ip, "too many failed logins", rawIp);
+    await logEvent(env, "admin_login_throttled", null, null, ip, "too many failed logins", rawIp, reqCountry(request));
     return json({ error: "too many attempts — try again later" }, 429, env);
   }
   const totp = String(body.totp || "").trim();
@@ -838,12 +842,12 @@ async function handleAdminLogin(request, env) {
       const un = String(body.username).toLowerCase();
       failDetail = /^[a-z0-9_.-]{1,32}$/.test(un) ? `bad login (${un})` : "bad login (invalid username)";
     }
-    await logEvent(env, "admin_login_fail", null, null, ip, failDetail, rawIp);
+    await logEvent(env, "admin_login_fail", null, null, ip, failDetail, rawIp, reqCountry(request));
     return json({ error: "invalid credentials" }, 401, env);
   }
   const session = uuid(), ttl = 8 * 3600;
   await env.DB.prepare("INSERT INTO sessions(token,admin,expires,last_active) VALUES(?,?,?,?)").bind(await tokenHash(session), identity, nowSec() + ttl, nowSec()).run();
-  await logEvent(env, "admin_login_ok", null, null, ip, `session created (${identity})`, rawIp);
+  await logEvent(env, "admin_login_ok", null, null, ip, `session created (${identity})`, rawIp, reqCountry(request));
   return json({ session, expires_in: ttl, admin: identity, master: identity === "master" }, 200, env);
 }
 async function handleAdminLogout(request, env) {
@@ -959,16 +963,16 @@ async function handleAdminStats(request, env) {
   for (const s of ["queued", "running", "done", "failed", "cancelled", "expired"])
     counts[s] = await countQ(env, "SELECT count(*) c FROM builds WHERE state=?", s);
   const avg = await env.DB.prepare("SELECT avg(finished_ts - dispatched_ts) a FROM builds WHERE (outcome='done' OR (outcome IS NULL AND state='done')) AND finished_ts IS NOT NULL AND dispatched_ts IS NOT NULL").first();
-  const builds = ((await env.DB.prepare("SELECT id,defconfig,ref,state,outcome,created_ts,dispatched_ts,finished_ts,run_id,cancel_requested,uid,ip_bucket,ip_full FROM builds ORDER BY created_ts DESC LIMIT 25").all()).results || []).map((b) => ({
+  const builds = ((await env.DB.prepare("SELECT id,defconfig,ref,state,outcome,created_ts,dispatched_ts,finished_ts,run_id,cancel_requested,uid,ip_bucket,ip_full,country FROM builds ORDER BY created_ts DESC LIMIT 25").all()).results || []).map((b) => ({
     build_id: b.id, defconfig: b.defconfig, ref: b.ref,
     state: b.state === "running" && b.cancel_requested ? "cancelling" : b.state,
     outcome: b.outcome,
     created_ts: b.created_ts, dispatched_ts: b.dispatched_ts, finished_ts: b.finished_ts, run_id: b.run_id, uid: b.uid,
-    ip: b.ip_full || b.ip_bucket, ip_bucket: b.ip_bucket,
+    ip: b.ip_full || b.ip_bucket, ip_bucket: b.ip_bucket, country: b.country,
   }));
-  const events = ((await env.DB.prepare("SELECT ts,kind,build_id,detail,uid,ip_bucket,ip_full FROM events ORDER BY id DESC LIMIT 60").all()).results || []).map((e) => ({
+  const events = ((await env.DB.prepare("SELECT ts,kind,build_id,detail,uid,ip_bucket,ip_full,country FROM events ORDER BY id DESC LIMIT 60").all()).results || []).map((e) => ({
     ts: e.ts, kind: e.kind, build_id: e.build_id, detail: e.detail, uid: e.uid,
-    ip: e.ip_full || e.ip_bucket, ip_bucket: e.ip_bucket,
+    ip: e.ip_full || e.ip_bucket, ip_bucket: e.ip_bucket, country: e.country,
   }));
   return json({
     builds_enabled: (await getSetting(env, "builds_enabled")) !== "0",

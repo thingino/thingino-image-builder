@@ -1,11 +1,14 @@
 -- D1 schema for the Cloudflare Worker broker (mirrors the Rust/SQLite broker).
 -- Apply: wrangler d1 execute thingino-builder --file schema.sql   (add --remote to apply to prod)
 -- Migrating a pre-ref DB: ALTER TABLE builds ADD COLUMN ref TEXT;
+-- Migrating a pre-country DB: ALTER TABLE builds ADD COLUMN country TEXT;
+--                             ALTER TABLE events ADD COLUMN country TEXT;
 CREATE TABLE IF NOT EXISTS builds (
   id TEXT PRIMARY KEY,
   uid TEXT NOT NULL,
   ip_bucket TEXT NOT NULL,
   ip_full TEXT,
+  country TEXT,  -- request origin (ISO 3166-1 alpha-2) from Cloudflare's edge geo, for abuse triage
   defconfig TEXT NOT NULL,
   ref TEXT,  -- thingino branch the build was requested from (master/ciao/stable; NULL = predates the column)
   state TEXT NOT NULL,
@@ -31,6 +34,7 @@ CREATE TABLE IF NOT EXISTS events (
   uid TEXT,
   ip_bucket TEXT,
   ip_full TEXT,
+  country TEXT,  -- as on builds
   detail TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
