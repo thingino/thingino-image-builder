@@ -27,6 +27,16 @@ on:
       commit:
         description: "thingino commit/ref to build (blank = master)"
         required: false
+      ref:
+        description: "thingino branch the commit belongs to (master/ciao/stable)"
+        required: false
+        default: master
+      runner_arch:
+        description: "Runner architecture"
+        type: choice
+        options: [arm64, x86_64]
+        required: false
+        default: arm64
 
 # No GitHub-side concurrency group: the broker is the gate (global cap of 6),
 # so dispatched builds run in parallel here.
@@ -47,7 +57,11 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-26.04
+    # ARM64 by default, mirroring thingino-firmware's nightly: the hosted ARM runners are
+    # faster for these builds, and the firmware repo's rolling per-board ccache release is
+    # built on ARM64, so only an ARM64 build can actually hit it (ccache never matches
+    # across host arch). x86_64 stays available for manual runs.
+    runs-on: ${{ (github.event.inputs.runner_arch == 'x86_64') && 'ubuntu-26.04' || 'ubuntu-26.04-arm' }}
     timeout-minutes: 60
     defaults:
       run:
@@ -62,6 +76,7 @@ jobs:
           RAW_DEFCONFIG: ${{ github.event.client_payload.defconfig || github.event.inputs.defconfig }}
           RAW_BUILD_ID: ${{ github.event.client_payload.build_id || github.event.inputs.build_id }}
           RAW_COMMIT: ${{ github.event.client_payload.commit || github.event.inputs.commit }}
+          RAW_REF: ${{ github.event.client_payload.ref || github.event.inputs.ref }}
         run: |
           set -euo pipefail
           DEFCONFIG="${RAW_DEFCONFIG:-}"
@@ -81,34 +96,32 @@ jobs:
           if [[ ! "$COMMIT" =~ ^(master|[0-9a-f]{7,40})$ ]]; then
             echo "::error::Invalid commit: '$COMMIT'"; exit 1
           fi
+          # ref: the thingino branch this commit belongs to; names the local branch and
+          # picks the upstream ccache channel. Anything unexpected falls back to master.
+          REF="${RAW_REF:-}"
+          if [[ ! "$REF" =~ ^(master|ciao|stable)$ ]]; then REF="master"; fi
           echo "defconfig=$DEFCONFIG" >> "$GITHUB_OUTPUT"
           echo "build_id=$BUILD_ID" >> "$GITHUB_OUTPUT"
           echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
           {
             echo "## web-build \`$BUILD_ID\`"
             echo "- defconfig: \`$DEFCONFIG\`"
-            echo "- commit: \`$COMMIT\`"
+            echo "- commit: \`$COMMIT\` (\`$REF\`)"
+            echo "- runner: \`${{ runner.arch }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Install GitHub CLI
-        run: |
-          set -eux
-          apt-get update
-          apt-get install -y curl ca-certificates
-          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-            | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
-          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-            | tee /etc/apt/sources.list.d/github-cli.list > /dev/null
-          apt-get update
-
+      # Same dependency list as thingino-firmware's nightly (debian:forky ships gh), which
+      # builds every board on it daily; our old copy carried a stale external gh apt repo
+      # and a pile of packages nothing here uses.
       - name: Install build dependencies
         run: |
           set -eux
+          apt-get update
           apt-get install -y --no-install-recommends --no-install-suggests \
-            autoconf bc bison build-essential ca-certificates ccache cmake cpio curl dialog \
-            file flex gawk gh git jq libcrypt-dev libncurses-dev libssl-dev libusb-1.0-0-dev lzop m4 \
-            make mtools nano nodejs npm p7zip-full parted perl procps python3 python3-dev \
-            python3-setuptools ripgrep rsync shfmt swig tzdata u-boot-tools unzip vim-tiny wget whiptail
+            autoconf build-essential bc cmake cpio curl ca-certificates file git gh make gawk jq \
+            lzop m4 p7zip-full perl python3 python3-setuptools procps rsync tzdata u-boot-tools \
+            unzip wget libncurses-dev swig python3-dev libssl-dev
 
       - name: Set timezone
         run: ln -sf "/usr/share/zoneinfo/${TZ}" /etc/localtime && echo "${TZ}" > /etc/timezone
@@ -140,7 +153,7 @@ jobs:
           # clean no-op: we build the pinned commit exactly (no drift to branch-
           # latest), thingino's version string + output dir show the real branch,
           # and make update's submodule-update + patch steps still run.
-          REF="${THINGINO_REF:-master}"
+          REF="${{ steps.in.outputs.ref }}"
           git checkout -B "$REF"
           git config "branch.${REF}.remote" .
           git config "branch.${REF}.merge" "refs/heads/${REF}"
@@ -164,15 +177,55 @@ jobs:
       - name: Setup cache directories
         run: mkdir -p ~/.buildroot-ccache ~/dl
 
-      - name: Restore ccache
+      # thingino-firmware's nightlies publish a per-board, per-branch ccache to a rolling
+      # 'ccache' release (built on ARM64, refreshed daily), mirroring their own restore
+      # step. Channel fallback tries the requested branch first, then ciao (their full
+      # nightly matrix lives there), then master. Best-effort: a miss just builds colder.
+      - name: Restore ccache from thingino-firmware release
+        id: upcc
+        env:
+          DEFCONFIG: ${{ steps.in.outputs.defconfig }}
+          REF: ${{ steps.in.outputs.ref }}
+          CACHE_ARCH: ${{ runner.arch }}
+        run: |
+          set -euo pipefail
+          CAM_SAFE=$(printf '%s' "$DEFCONFIG" | tr -c 'A-Za-z0-9._-' '-')
+          mkdir -p /tmp/cc ~/.buildroot-ccache
+          restored=""
+          seen=""
+          for CH in "$REF" ciao master; do
+            case " $seen " in *" $CH "*) continue;; esac
+            seen="$seen $CH"
+            ASSET="ccache-${CH}-${CACHE_ARCH}-${CAM_SAFE}.zip"
+            if gh release download ccache --repo "$DL_CACHE_REPO" --pattern "$ASSET" --dir /tmp/cc 2>/dev/null; then
+              echo "Restoring $ASSET ($(du -h "/tmp/cc/$ASSET" | cut -f1))"
+              ( cd ~ && 7z x -y "/tmp/cc/$ASSET" >/dev/null ) || echo "  7z rc=$? during restore (non-fatal)"
+              restored="$ASSET"
+              break
+            fi
+          done
+          if [ -n "$restored" ]; then
+            echo "restored=true" >> "$GITHUB_OUTPUT"
+            echo "ccache dir now: $(du -sh ~/.buildroot-ccache | cut -f1) in $(find ~/.buildroot-ccache -type f | wc -l) files"
+            echo "- ccache: \`$restored\`" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "restored=false" >> "$GITHUB_OUTPUT"
+            echo "No upstream ccache asset for ${CAM_SAFE}, falling back to the repo cache"
+          fi
+          exit 0
+
+      # Repo-local fallback for boards the upstream release doesn't cover (exp boards,
+      # brand-new defconfigs): only restored AND only saved when upstream missed, so the
+      # 10GB actions/cache quota isn't spent duplicating what the release already has.
+      - name: Restore ccache (repo cache fallback)
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
-        if: always()
+        if: steps.upcc.outputs.restored != 'true'
         with:
           path: ~/.buildroot-ccache
-          key: Linux-ccache-${{ steps.in.outputs.defconfig }}-${{ env.CURRENT_YEAR }}-week-${{ env.WEEK_NUMBER }}
+          key: ${{ runner.arch }}-ccache-${{ steps.in.outputs.defconfig }}-${{ env.CURRENT_YEAR }}-week-${{ env.WEEK_NUMBER }}
           restore-keys: |
-            Linux-ccache-${{ steps.in.outputs.defconfig }}-${{ env.CURRENT_YEAR }}-
-            Linux-ccache-${{ steps.in.outputs.defconfig }}-
+            ${{ runner.arch }}-ccache-${{ steps.in.outputs.defconfig }}-${{ env.CURRENT_YEAR }}-
+            ${{ runner.arch }}-ccache-${{ steps.in.outputs.defconfig }}-
 
       - name: Find buildroot-dl-cache release
         id: find_release
