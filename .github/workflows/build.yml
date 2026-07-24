@@ -111,9 +111,18 @@ jobs:
             echo "- runner: \`${{ runner.arch }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # Same dependency list as thingino-firmware's nightly (debian:forky ships gh), which
-      # builds every board on it daily; our old copy carried a stale external gh apt repo
-      # and a pile of packages nothing here uses.
+      # gh is not in Debian's own repos: GitHub's apt repo supplies it, same step as
+      # thingino-firmware's nightly.
+      - name: Install GitHub CLI
+        run: |
+          set -eux
+          apt-get update
+          apt-get install -y curl ca-certificates
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+
+      # Same dependency list as thingino-firmware's nightly, which builds every board on
+      # it daily; our old copy carried a pile of packages nothing here uses.
       - name: Install build dependencies
         run: |
           set -eux
