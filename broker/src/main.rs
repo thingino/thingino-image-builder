@@ -1425,7 +1425,23 @@ async fn admin_login(
     Json(json!({ "session": session, "expires_in": SESSION_TTL_SECS, "admin": identity, "master": master })).into_response()
 }
 
-async fn admin_stats(State(st): State<AppState>, headers: HeaderMap) -> Response {
+async fn admin_stats(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::RawQuery(q): axum::extract::RawQuery,
+) -> Response {
+    // ?all=builds / ?all=events / ?all=builds,events widens that table from the light
+    // default to the whole 7-day window, clamped here so the panel can't ask for an
+    // unbounded read. Independent per table.
+    let all_of = |what: &str| {
+        q.as_deref().is_some_and(|s| {
+            s.split('&')
+                .filter_map(|kv| kv.strip_prefix("all="))
+                .any(|v| v.split(',').any(|x| x == what))
+        })
+    };
+    let want_all_b = all_of("builds");
+    let want_all_e = all_of("events");
     let Some(me) = session_admin(&headers, &st) else {
         return json_err(StatusCode::UNAUTHORIZED, "admin auth required");
     };
@@ -1460,8 +1476,9 @@ async fn admin_stats(State(st): State<AppState>, headers: HeaderMap) -> Response
             |r| r.get(0),
         )
         .unwrap_or(0);
-    let recent_builds = query_recent_builds(&conn, 25);
-    let recent_events = query_recent_events(&conn, 60);
+    let recent_builds = query_recent_builds(&conn, if want_all_b { 500 } else { 25 });
+    let recent_events = query_recent_events(&conn, if want_all_e { 1000 } else { 60 });
+    let events_total: i64 = conn.query_row("SELECT count(*) FROM events", [], |r| r.get(0)).unwrap_or(0);
     let enabled = builds_enabled(&conn);
     let manage_users = admin_can(&conn, &me, "manage_users");
     let edit_notice = admin_can(&conn, &me, "edit_notice");
@@ -1472,6 +1489,8 @@ async fn admin_stats(State(st): State<AppState>, headers: HeaderMap) -> Response
         "builds_enabled": enabled,
         "counts": counts,
         "last24h": last24,
+        "events_total": events_total,
+        "kept_days": 7,
         "total_done": total_done,
         "avg_build_secs": avg.map(|v| v.round() as i64),
         "max_concurrent": lim.max_concurrent,
