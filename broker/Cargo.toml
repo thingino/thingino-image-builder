@@ -26,7 +26,7 @@ sha2 = "0.10"
 base64 = "0.22"
 getrandom = "0.2"
 aes-gcm = "0.10"
-maxminddb = "0.24"
+maxminddb = "0.27"
 
 [profile.release]
 opt-level = "z"

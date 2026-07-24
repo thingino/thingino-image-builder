@@ -332,10 +332,16 @@ fn log_event(
     tracing::info!("event {kind}: {detail}");
 }
 
+/// ISO country code from an open GeoIP2/GeoLite2 database. (maxminddb 0.27 API:
+/// lookup() returns a lazy LookupResult; decode() yields Option<T>, and the geoip2
+/// structs' nested fields are non-optional defaults.)
+fn mmdb_country(reader: &maxminddb::Reader<Vec<u8>>, ip: std::net::IpAddr) -> Option<String> {
+    let c: maxminddb::geoip2::Country = reader.lookup(ip).ok()?.decode().ok()??;
+    c.country.iso_code.map(str::to_string)
+}
 /// ISO country code for a client address, when a GeoLite2 database is configured.
 fn ip_country(st: &AppState, ip: std::net::IpAddr) -> Option<String> {
-    let c: maxminddb::geoip2::Country = st.geoip.as_ref()?.lookup(ip).ok()?;
-    c.country?.iso_code.map(str::to_string)
+    mmdb_country(st.geoip.as_ref()?, ip)
 }
 /// log_event plus the origin country, for the few request-context call sites; everything
 /// else keeps the plain 7-arg log_event and writes NULL country.
@@ -2729,6 +2735,22 @@ mod pbkdf2_tests {
         // The timing dummy must carry the current count too (enumeration guard).
         assert_eq!(hash_iters(DUMMY_PW_HASH), PBKDF2_ITERS, "dummy must track PBKDF2_ITERS");
         assert!(!verify_password("anything", DUMMY_PW_HASH), "dummy never matches");
+    }
+}
+
+#[cfg(test)]
+mod geoip_tests {
+    use super::*;
+    // Real-database check of the maxminddb API usage, run only when GEOIP_TEST_DB points
+    // at MaxMind's published test fixture (GeoIP2-Country-Test.mmdb), whose documented
+    // content maps 81.2.69.0/24 to GB. Guards the 0.24 -> 0.27 lookup/decode migration.
+    #[test]
+    fn country_lookup_against_fixture() {
+        let Some(path) = std::env::var("GEOIP_TEST_DB").ok().filter(|s| !s.is_empty()) else { return };
+        let reader = maxminddb::Reader::open_readfile(&path).expect("open test mmdb");
+        assert_eq!(mmdb_country(&reader, "81.2.69.142".parse().unwrap()).as_deref(), Some("GB"));
+        // An address the fixture does not cover resolves to None, not an error.
+        assert_eq!(mmdb_country(&reader, "10.0.0.1".parse().unwrap()), None);
     }
 }
 
