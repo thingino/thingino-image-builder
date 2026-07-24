@@ -164,4 +164,8 @@ I18N.add("zh-CN", {
   builder_link: "构建页",
   footer_link: "thingino 镜像构建器",
   privacy_link: "隐私",
+  // recent-tables footer (default view vs the full retention window)
+  showing_latest: "显示保留的 {m} 条中最新的 {n} 条（保留 {days} 天）",
+  show_all: "显示全部",
+  show_less: "收起",
 });

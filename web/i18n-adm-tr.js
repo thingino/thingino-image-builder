@@ -164,4 +164,8 @@ I18N.add("tr", {
   builder_link: "oluşturucu",
   footer_link: "thingino imaj oluşturucu",
   privacy_link: "gizlilik",
+  // recent-tables footer (default view vs the full retention window)
+  showing_latest: "saklanan {m} kayıttan en yeni {n} tanesi ({days} gün)",
+  show_all: "tümünü göster",
+  show_less: "daha az göster",
 });

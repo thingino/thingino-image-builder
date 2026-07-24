@@ -164,4 +164,8 @@ I18N.add("fr", {
   builder_link: "générateur",
   footer_link: "générateur d'images thingino",
   privacy_link: "confidentialité",
+  // recent-tables footer (default view vs the full retention window)
+  showing_latest: "affichage des {n} plus récents sur {m} conservés ({days} jours)",
+  show_all: "tout afficher",
+  show_less: "afficher moins",
 });

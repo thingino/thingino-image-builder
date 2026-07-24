@@ -37,7 +37,7 @@ const tile=(l,n)=>`<div class="col-6 col-md-3 col-lg-2"><div class="card text-ce
 // real cause; the public page just shows the generic maintenance banner.
 const capText=()=>{ const n=new Date(), reset=new Date(Date.UTC(n.getUTCFullYear(),n.getUTCMonth(),n.getUTCDate()+1)); return I18N.t('over_capacity',{t:reset.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}); };
 function showCap(on){ const b=$('cap-banner'); if(b){ if(on) b.textContent=capText(); b.style.display=on?'':'none'; } }
-async function adminGet(){ const r=await fetch(API+'/api/admin/stats',{headers:{Authorization:'Bearer '+tok()}}); if(r.status===401){ const e=new Error('unauthorized'); e.auth=1; throw e; } if(r.status===429){ const e=new Error('capacity'); e.cap=1; throw e; } if(!r.ok) throw new Error('http '+r.status); return r.json(); }
+async function adminGet(){ const r=await fetch(API+'/api/admin/stats'+allQs(),{headers:{Authorization:'Bearer '+tok()}}); if(r.status===401){ const e=new Error('unauthorized'); e.auth=1; throw e; } if(r.status===429){ const e=new Error('capacity'); e.cap=1; throw e; } if(!r.ok) throw new Error('http '+r.status); return r.json(); }
 let masterMode=false;
 function setMaster(on){ masterMode=on;
   $('username').style.display=on?'none':''; $('password').style.display=on?'none':''; $('token').style.display=on?'':'none';
@@ -73,6 +73,12 @@ function idledOut(){ const la=parseInt(localStorage.getItem(LA)||'0',10);
 
 let enabled=true;
 let srvVer=null;
+// The two tables default to the newest 25 / 60 rows; each table's "show all" re-fetches
+// with that table named in ?all= (server-clamped), so the whole 7-day retention window is
+// visible for one without dragging the other along. Session-only: a reload returns to the
+// light default and the 10s poll stays cheap for everyone else.
+const showAll={builds:false,events:false};
+const allQs=()=>{ const p=Object.keys(showAll).filter(k=>showAll[k]); return p.length?'?all='+p.join(','):''; };
 async function refresh(){
   let d; try{ d=await adminGet(); }catch(e){ if(e&&e.auth){ logout(); } else if(e&&e.cap){ showCap(true); } return; }
   showCap(false);
@@ -105,6 +111,15 @@ async function refresh(){
   const c=d.counts||{};
   $('tiles').innerHTML=[['state_running',c.running],['state_queued',c.queued],['state_done',c.done],['state_failed',c.failed],['state_cancelled',c.cancelled],['state_expired',c.expired],['tile_24h',d.last24h],['tile_total_done',d.total_done??0],['tile_avg_build',d.avg_build_secs?Math.round(d.avg_build_secs/60)+'m':'–']].map(([k,n])=>tile(I18N.t(k),n)).join('');
   $('builds-body').innerHTML=(d.recent_builds||[]).map(b=>`<tr><td><code>${esc(short(b.build_id))}</code></td><td>${esc(b.defconfig)}</td><td>${esc(b.ref||'–')}</td><td>${pill(b.state,b.outcome)}${buildAction(b)}</td><td><code>${esc(short(b.uid))}</code></td><td>${ipcell(b.ip,b.ip_bucket,b.country)}</td><td>${ago(b.created_ts)}</td><td>${dur(b.dispatched_ts,b.finished_ts)}</td><td>${runcell(b.run_id,b.state)}</td></tr>`).join('');
+  // "showing latest N of M kept (7 days)" + the expand/collapse link under each table.
+  // Builds total = the state-count tiles summed; events carry their own count.
+  const moreLine=(id,which,shown,total)=>{ const el=$(id); if(!el) return;
+    const on=showAll[which];
+    let h=esc(I18N.t('showing_latest',{n:shown,m:total??shown,days:d.kept_days||7}));
+    if((total??0)>shown||on) h+=' <a href="#" class="more-toggle" data-which="'+which+'">'+esc(I18N.t(on?'show_less':'show_all'))+'</a>';
+    el.innerHTML=h; };
+  moreLine('builds-more','builds',(d.recent_builds||[]).length,Object.values(c).reduce((a,x)=>a+(x||0),0));
+  moreLine('events-more','events',(d.recent_events||[]).length,d.events_total);
   $('events-body').innerHTML=(d.recent_events||[]).map(e=>`<tr><td>${tfmt(e.ts)}</td><td>${esc(e.kind)}</td><td><code>${esc(short(e.build_id))}</code></td><td><code>${esc(short(e.uid))}</code></td><td>${ipcell(e.ip,e.ip_bucket,e.country)}</td><td class="muted">${esc(e.detail)}</td></tr>`).join('');
   $('updated').textContent=I18N.t('updated',{t:new Date().toLocaleTimeString()});
 }
@@ -233,6 +248,9 @@ $('limits-edit').onclick=editLimits;
 $('limits-save').onclick=saveLimits;
 $('limits-cancel').onclick=viewLimits;
 $('upd-btn').onclick=doUpdate;
+// Expand/collapse one recent table to the full retention window (independent per table).
+document.addEventListener('click',ev=>{ const x=ev.target.closest('.more-toggle'); if(!x) return; ev.preventDefault();
+  const w=x.dataset.which; if(w in showAll){ showAll[w]=!showAll[w]; refresh(); } });
 // Click an IP to toggle between the full address and its /64 (v4 /32) bucket.
 document.addEventListener('click',ev=>{ const c=ev.target.closest('.ipc'); if(!c) return; const f=c.dataset.full; if(ipExpanded.has(f)) ipExpanded.delete(f); else ipExpanded.add(f); c.textContent=ipExpanded.has(f)?c.dataset.bucket:c.dataset.full; });
 // Per-build admin action: cancel (active) or remove artifact+run (finished).

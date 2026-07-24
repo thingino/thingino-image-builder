@@ -164,4 +164,8 @@ I18N.add("ru", {
   builder_link: "сборщик",
   footer_link: "сборщик образов thingino",
   privacy_link: "конфиденциальность",
+  // recent-tables footer (default view vs the full retention window)
+  showing_latest: "показаны последние {n} из {m} хранимых ({days} дней)",
+  show_all: "показать все",
+  show_less: "показать меньше",
 });

@@ -164,4 +164,8 @@ I18N.add("ja", {
   builder_link: "ビルダー",
   footer_link: "thingino イメージビルダー",
   privacy_link: "プライバシー",
+  // recent-tables footer (default view vs the full retention window)
+  showing_latest: "保存中の {m} 件のうち最新 {n} 件を表示（保存期間 {days} 日）",
+  show_all: "すべて表示",
+  show_less: "表示を減らす",
 });

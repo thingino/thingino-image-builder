@@ -164,4 +164,8 @@ I18N.add("ko", {
   builder_link: "빌더",
   footer_link: "thingino 이미지 빌더",
   privacy_link: "개인정보처리방침",
+  // recent-tables footer (default view vs the full retention window)
+  showing_latest: "보관 중인 {m}건 중 최신 {n}건 표시({days}일 보관)",
+  show_all: "모두 보기",
+  show_less: "간략히 보기",
 });

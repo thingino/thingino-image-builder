@@ -164,4 +164,8 @@ I18N.add("uk", {
   builder_link: "збірка",
   footer_link: "збирач образів thingino",
   privacy_link: "конфіденційність",
+  // recent-tables footer (default view vs the full retention window)
+  showing_latest: "показано останні {n} з {m} збережених ({days} днів)",
+  show_all: "показати всі",
+  show_less: "показати менше",
 });

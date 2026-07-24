@@ -164,4 +164,8 @@ I18N.add("pt", {
   builder_link: "construtor",
   footer_link: "construtor de imagens thingino",
   privacy_link: "privacidade",
+  // recent-tables footer (default view vs the full retention window)
+  showing_latest: "mostrando os {n} mais recentes de {m} mantidos ({days} dias)",
+  show_all: "mostrar tudo",
+  show_less: "mostrar menos",
 });

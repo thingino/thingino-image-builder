@@ -164,4 +164,8 @@ I18N.add("ar", {
   builder_link: "المُنشئ",
   footer_link: "منشئ صور thingino",
   privacy_link: "الخصوصية",
+  // recent-tables footer (default view vs the full retention window)
+  showing_latest: "عرض أحدث {n} من أصل {m} محفوظة ({days} أيام)",
+  show_all: "عرض الكل",
+  show_less: "عرض أقل",
 });

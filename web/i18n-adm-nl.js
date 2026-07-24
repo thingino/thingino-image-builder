@@ -164,4 +164,8 @@ I18N.add("nl", {
   builder_link: "builder",
   footer_link: "thingino Image-Builder",
   privacy_link: "privacy",
+  // recent-tables footer (default view vs the full retention window)
+  showing_latest: "nieuwste {n} van {m} bewaarde ({days} dagen)",
+  show_all: "alles tonen",
+  show_less: "minder tonen",
 });

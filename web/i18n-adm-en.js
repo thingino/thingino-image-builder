@@ -164,4 +164,8 @@ I18N.add("en", {
   builder_link: "builder",
   footer_link: "thingino image builder",
   privacy_link: "privacy",
+  // recent-tables footer (default view vs the full retention window)
+  showing_latest: "showing the latest {n} of {m} kept ({days} days)",
+  show_all: "show all",
+  show_less: "show less",
 });
