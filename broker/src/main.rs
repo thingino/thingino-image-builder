@@ -2342,7 +2342,7 @@ struct RunRow {
 /// (id, run_id, dispatched_ts, cancel_requested)
 type RunningBuild = (String, Option<i64>, i64, bool);
 /// (id, defconfig, commit_sha)
-type QueuedBuild = (String, String, Option<String>);
+type QueuedBuild = (String, String, Option<String>, Option<String>);
 
 async fn scheduler_step(st: &AppState) -> anyhow::Result<()> {
     let now_ts = now();
@@ -2371,9 +2371,9 @@ async fn scheduler_step(st: &AppState) -> anyhow::Result<()> {
         };
         let slots = (lim.max_concurrent - running.len() as i64).max(0);
         let to_dispatch: Vec<QueuedBuild> = if slots > 0 {
-            let mut q = conn.prepare("SELECT id, defconfig, commit_sha FROM builds WHERE state='queued' ORDER BY created_ts ASC LIMIT ?1")?;
+            let mut q = conn.prepare("SELECT id, defconfig, commit_sha, ref FROM builds WHERE state='queued' ORDER BY created_ts ASC LIMIT ?1")?;
             let rows = q
-                .query_map([slots], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?)))?
+                .query_map([slots], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?, r.get::<_, Option<String>>(3)?)))?
                 .filter_map(|x| x.ok())
                 .collect::<Vec<_>>();
             rows
@@ -2465,7 +2465,7 @@ async fn scheduler_step(st: &AppState) -> anyhow::Result<()> {
     }
 
     // 4) Dispatch from the queue into free slots.
-    for (id, defconfig, commit) in &to_dispatch {
+    for (id, defconfig, commit, git_ref) in &to_dispatch {
         let still_queued: bool = {
             let conn = st.db.lock();
             conn.query_row("SELECT 1 FROM builds WHERE id=?1 AND state='queued'", [id], |_| Ok(())).optional().ok().flatten().is_some()
@@ -2473,7 +2473,7 @@ async fn scheduler_step(st: &AppState) -> anyhow::Result<()> {
         if !still_queued {
             continue;
         }
-        match dispatch_build(st, id, defconfig, commit.as_deref()).await {
+        match dispatch_build(st, id, defconfig, commit.as_deref(), git_ref.as_deref()).await {
             Ok(()) => {
                 let conn = st.db.lock();
                 conn.execute("UPDATE builds SET state='running', dispatched_ts=?2 WHERE id=?1", rusqlite::params![id, now()]).ok();
@@ -2633,7 +2633,7 @@ async fn check_latest_release(st: &AppState) -> Option<String> {
     tag
 }
 
-async fn dispatch_build(st: &AppState, build_id: &str, defconfig: &str, commit: Option<&str>) -> anyhow::Result<()> {
+async fn dispatch_build(st: &AppState, build_id: &str, defconfig: &str, commit: Option<&str>, git_ref: Option<&str>) -> anyhow::Result<()> {
     let url = format!("https://api.github.com/repos/{}/dispatches", st.cfg.github_repo);
     let mut cp = serde_json::Map::new();
     cp.insert("build_id".into(), json!(build_id));
@@ -2641,6 +2641,9 @@ async fn dispatch_build(st: &AppState, build_id: &str, defconfig: &str, commit: 
     if let Some(c) = commit {
         cp.insert("commit".into(), json!(c));
     }
+    // Branch name rides along so CI can pick the matching upstream ccache channel and
+    // name the build branch; the workflow re-validates it against the same allow-list.
+    cp.insert("ref".into(), json!(valid_ref(git_ref.unwrap_or("master"))));
     let payload = json!({ "event_type": "web-build", "client_payload": cp });
     let resp = gh(st.http.post(&url).bearer_auth(github_token(st).await)).json(&payload).send().await?;
     if resp.status().is_success() {
