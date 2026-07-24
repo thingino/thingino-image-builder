@@ -40,7 +40,7 @@ browser ──POST /api/build──▶ Rust broker ──repository_dispatch─�
 - **Live status**: queue position, build progress, cancel (persisted
   "cancelling" state until the run stops), 30-minute download window.
 - **Admin panel** (`/admin.html`): live stats, recent builds/events with
-  requester uid + full **IP** (click → /64 bucket), a global **kill switch**,
+  requester uid + full **IP** (click → /64 bucket) and origin-country flag, a global **kill switch**,
   a **notice banner** (one at a time, info/warning/danger, optional auto-expiry,
   shown to every visitor alongside the builds-disabled banner),
   **live limit editing** (with usage), per-build **cancel / remove**, **clear logs

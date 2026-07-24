@@ -6,7 +6,13 @@ const $=id=>document.getElementById(id);
 const short=s=>s?String(s).slice(0,8):'';
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const ipExpanded=new Set();
-const ipcell=(full,bucket)=>{ const f=full||'', b=bucket||full||''; return `<code class="ipc" data-full="${esc(f)}" data-bucket="${esc(b)}" style="cursor:pointer" title="${esc(I18N.t('title_ip_toggle'))}">${esc(ipExpanded.has(f)?b:f)}</code>`; };
+// Origin flag for an ISO 3166-1 alpha-2 code (two regional-indicator codepoints, so no
+// image assets). Cloudflare's pseudo-codes ("XX" unknown, "T1" Tor) and anything else
+// non-alphabetic render as the bare code instead of a bogus flag.
+const flag=cc=>{ if(!cc||!/^[A-Za-z]{2}$/.test(cc)) return esc(cc||'');
+  return String.fromCodePoint(...[...cc.toUpperCase()].map(c=>c.codePointAt(0)+127397)); };
+const geo=cc=>cc?`<span class="me-1" title="${esc(cc)}">${flag(cc)}</span>`:'';
+const ipcell=(full,bucket,cc)=>{ const f=full||'', b=bucket||full||''; return `${geo(cc)}<code class="ipc" data-full="${esc(f)}" data-bucket="${esc(b)}" style="cursor:pointer" title="${esc(I18N.t('title_ip_toggle'))}">${esc(ipExpanded.has(f)?b:f)}</code>`; };
 function buildAction(b){ const id=esc(b.build_id);
   if(['queued','running','cancelling'].includes(b.state)) return ` <a href="#" class="bact text-danger ms-1" data-act="cancel" data-id="${id}" title="${esc(I18N.t('title_cancel_build'))}">✕</a>`;
   if(['done','failed'].includes(b.state)) return ` <a href="#" class="bact text-secondary small ms-1" data-act="expire" data-id="${id}" title="${esc(I18N.t('title_remove_artifact'))}">${I18N.t('act_remove')}</a>`;
@@ -98,8 +104,8 @@ async function refresh(){
   isMaster=!!d.master; if(d.master||d.manage_users){ if(!usersShown){ $('users-card').style.display=''; usersShown=true; renderUsers(); } } else $('users-card').style.display='none';
   const c=d.counts||{};
   $('tiles').innerHTML=[['state_running',c.running],['state_queued',c.queued],['state_done',c.done],['state_failed',c.failed],['state_cancelled',c.cancelled],['state_expired',c.expired],['tile_24h',d.last24h],['tile_total_done',d.total_done??0],['tile_avg_build',d.avg_build_secs?Math.round(d.avg_build_secs/60)+'m':'–']].map(([k,n])=>tile(I18N.t(k),n)).join('');
-  $('builds-body').innerHTML=(d.recent_builds||[]).map(b=>`<tr><td><code>${esc(short(b.build_id))}</code></td><td>${esc(b.defconfig)}</td><td>${esc(b.ref||'–')}</td><td>${pill(b.state,b.outcome)}${buildAction(b)}</td><td><code>${esc(short(b.uid))}</code></td><td>${ipcell(b.ip,b.ip_bucket)}</td><td>${ago(b.created_ts)}</td><td>${dur(b.dispatched_ts,b.finished_ts)}</td><td>${runcell(b.run_id,b.state)}</td></tr>`).join('');
-  $('events-body').innerHTML=(d.recent_events||[]).map(e=>`<tr><td>${tfmt(e.ts)}</td><td>${esc(e.kind)}</td><td><code>${esc(short(e.build_id))}</code></td><td><code>${esc(short(e.uid))}</code></td><td>${ipcell(e.ip,e.ip_bucket)}</td><td class="muted">${esc(e.detail)}</td></tr>`).join('');
+  $('builds-body').innerHTML=(d.recent_builds||[]).map(b=>`<tr><td><code>${esc(short(b.build_id))}</code></td><td>${esc(b.defconfig)}</td><td>${esc(b.ref||'–')}</td><td>${pill(b.state,b.outcome)}${buildAction(b)}</td><td><code>${esc(short(b.uid))}</code></td><td>${ipcell(b.ip,b.ip_bucket,b.country)}</td><td>${ago(b.created_ts)}</td><td>${dur(b.dispatched_ts,b.finished_ts)}</td><td>${runcell(b.run_id,b.state)}</td></tr>`).join('');
+  $('events-body').innerHTML=(d.recent_events||[]).map(e=>`<tr><td>${tfmt(e.ts)}</td><td>${esc(e.kind)}</td><td><code>${esc(short(e.build_id))}</code></td><td><code>${esc(short(e.uid))}</code></td><td>${ipcell(e.ip,e.ip_bucket,e.country)}</td><td class="muted">${esc(e.detail)}</td></tr>`).join('');
   $('updated').textContent=I18N.t('updated',{t:new Date().toLocaleTimeString()});
 }
 async function toggle(){ await fetch(API+'/api/admin/toggle',{method:'POST',headers:{Authorization:'Bearer '+tok(),'content-type':'application/json'},body:JSON.stringify({enabled:!enabled})}); refresh(); }
