@@ -99,6 +99,84 @@ struct Thingino {
     fetched_at: i64,
 }
 
+/// One selectable extra build option (e.g. NetConsole). The allowlist below is the
+/// single source of truth: a request may only carry ids it contains, so arbitrary
+/// config lines can never reach the build. `defs` holds the Buildroot config lines the
+/// id expands to; the workflow injects them through thingino's user-layer
+/// `local.fragment`, which is exactly the mechanism the option's own docs describe.
+/// `label`/`desc` follow the Buildroot Config.in convention: an untagged entry is
+/// English, `<lang>` suffixes are translations. The UI picks `<lang>` → untagged → id.
+struct BuildOption {
+    id: &'static str,
+    defs: &'static [&'static str],
+    label: &'static [(&'static str, &'static str)],
+    desc: &'static [(&'static str, &'static str)],
+}
+
+// ids: lowercase letters, digits, dash/underscore (go into JSON, URLs and event logs
+// unchanged); defs: whole `BR2_*` assignment lines, validated shape so nothing else
+// can ever be written into the fragment.
+const BUILD_OPTIONS: &[BuildOption] = &[
+    BuildOption {
+        id: "netconsole",
+        defs: &["BR2_PACKAGE_THINGINO_UBOOT_NETCONSOLE=y"],
+        label: &[
+            ("", "NetConsole (U-Boot console over UDP)"),
+            ("sk", "NetConsole (konzola U-Bootu cez UDP)"),
+            ("de", "NetConsole (U-Boot-Konsole über UDP)"),
+            ("fr", "NetConsole (console U-Boot sur UDP)"),
+            ("es", "NetConsole (consola de U-Boot por UDP)"),
+        ],
+        desc: &[
+            ("", "Get an interactive U-Boot prompt over the network instead of the serial port. Needs a board with Ethernet or USB OTG; only effective on branches whose bootloader supports it (ciao, master)."),
+            ("sk", "Interaktívna konzola U-Bootu po sieti namiesto sériového portu. Vyžaduje dosku s Ethernetom alebo USB OTG; účinné len na vetvách, ktorých bootloader to podporuje (ciao, master)."),
+            ("de", "Interaktive U-Boot-Eingabeaufforderung über das Netzwerk statt der seriellen Schnittstelle. Erfordert ein Board mit Ethernet oder USB OTG; nur wirksam in Zweigen mit unterstützendem Bootloader (ciao, master)."),
+            ("fr", "Invitation de commande U-Boot interactive via le réseau au lieu du port série. Nécessite une carte avec Ethernet ou USB OTG ; efficace uniquement sur les branches dont le bootloader le permet (ciao, master)."),
+            ("es", "Consola interactiva de U-Boot por red en lugar del puerto serie. Requiere una placa con Ethernet u USB OTG; solo tiene efecto en ramas cuyo bootloader lo admite (ciao, master)."),
+        ],
+    },
+];
+
+fn build_option(id: &str) -> Option<&'static BuildOption> {
+    BUILD_OPTIONS.iter().find(|o| o.id == id)
+}
+
+/// Pick a localized field: exact lang → untagged (English) → fallback.
+fn build_option_text(fields: &[(&str, &str)], lang: &str, fallback: &str) -> String {
+    fields
+        .iter()
+        .find(|(l, _)| *l == lang)
+        .or_else(|| fields.iter().find(|(l, _)| l.is_empty()))
+        .map(|(_, v)| v.to_string())
+        .unwrap_or_else(|| fallback.to_string())
+}
+
+/// Validate and canonicalise a requested option-id list: unknown ids → error,
+/// duplicates dropped, result sorted and comma-joined (the canonical DB/dispatch
+/// form; empty string = no options). Empty id strings are ignored rather than an
+/// error, so a trailing comma in a hand-written share link doesn't fail the build.
+fn normalize_options(req: &[String]) -> Result<String, String> {
+    let mut ids: Vec<&str> = Vec::with_capacity(req.len());
+    for s in req {
+        if s.is_empty() {
+            continue;
+        }
+        if build_option(s).is_none() {
+            return Err(format!("unknown option: {s}"));
+        }
+        if !ids.contains(&s.as_str()) {
+            ids.push(s);
+        }
+    }
+    ids.sort_unstable();
+    Ok(ids.join(","))
+}
+
+/// Canonical options string → the Buildroot config lines the workflow injects.
+fn build_option_defs(options: &str) -> String {
+    options.split(',').filter_map(build_option).flat_map(|o| o.defs.iter().copied()).collect::<Vec<_>>().join(",")
+}
+
 #[derive(Clone)]
 struct AppState {
     db: Arc<Mutex<Connection>>,
@@ -850,7 +928,8 @@ async fn main() -> anyhow::Result<()> {
             dispatched_ts INTEGER,
             finished_ts INTEGER,
             commit_sha TEXT,
-            outcome TEXT
+            outcome TEXT,
+            options TEXT NOT NULL DEFAULT ''
         );
         CREATE INDEX IF NOT EXISTS idx_state ON builds(state);
         CREATE INDEX IF NOT EXISTS idx_uid_created ON builds(uid, created_ts);
@@ -894,6 +973,7 @@ async fn main() -> anyhow::Result<()> {
     let _ = conn.execute("ALTER TABLE admins ADD COLUMN last_totp_step INTEGER", []);
     let _ = conn.execute("ALTER TABLE builds ADD COLUMN country TEXT", []);
     let _ = conn.execute("ALTER TABLE events ADD COLUMN country TEXT", []);
+    let _ = conn.execute("ALTER TABLE builds ADD COLUMN options TEXT NOT NULL DEFAULT ''", []);
 
     let http = reqwest::Client::builder()
         .user_agent("thingino-image-builder-broker")
@@ -930,6 +1010,7 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/api/health", get(|| async { "ok" }))
         .route("/api/defconfigs", get(get_defconfigs))
+        .route("/api/build-options", get(get_build_options))
         .route("/api/stats", get(get_stats))
         .route("/api/build", post(post_build))
         .route("/api/status/{build_id}", get(get_status))
@@ -1003,6 +1084,53 @@ async fn get_defconfigs(State(st): State<AppState>, Query(q): Query<RefQuery>) -
     Json(t.list.as_ref().clone()).into_response()
 }
 
+/// The selectable extra build options (allowlist above), localized from Accept-Language
+/// the same way the UI localizes: first tag whose primary subtag matches a `<lang>`
+/// suffix, else the untagged English entry.
+async fn get_build_options(headers: HeaderMap) -> Response {
+    let lang = accept_lang(&headers);
+    let list: Vec<serde_json::Value> = BUILD_OPTIONS
+        .iter()
+        .map(|o| {
+            json!({
+                "id": o.id,
+                "label": build_option_text(o.label, &lang, o.id),
+                "desc": build_option_text(o.desc, &lang, ""),
+            })
+        })
+        .collect();
+    Json(list).into_response()
+}
+
+/// Primary language of an Accept-Language header: first quality-ordered tag, with its
+/// region stripped ("sk-SK,cs;q=0.8" → "sk"). The option catalog only has a handful of
+/// translations; anything unmatched falls through to the untagged English entry.
+fn accept_lang(headers: &HeaderMap) -> String {
+    let raw = headers
+        .get(header::ACCEPT_LANGUAGE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    // Parse the q-values properly enough: "*q=0" tags (never send) are skipped.
+    let mut best: Option<(f32, &str)> = None;
+    for part in raw.split(',') {
+        let mut it = part.trim().split(";q=");
+        let tag = it.next().unwrap_or("").trim();
+        if tag.is_empty() || tag == "*" {
+            continue;
+        }
+        let q: f32 = it.next().and_then(|v| v.trim().parse().ok()).unwrap_or(1.0);
+        if q <= 0.0 {
+            continue;
+        }
+        match best {
+            Some((bq, _)) if bq >= q => {}
+            _ => best = Some((q, tag)),
+        }
+    }
+    best.map(|(_, t)| t.split('-').next().unwrap_or("").to_ascii_lowercase())
+        .unwrap_or_default()
+}
+
 async fn get_stats(State(st): State<AppState>, Query(q): Query<RefQuery>, headers: HeaderMap) -> Response {
     let uid = resolve_uid(&headers);
     let now_ts = now();
@@ -1063,6 +1191,9 @@ struct BuildReq {
     // Chosen thingino branch; absent/empty/unknown → "master" (validated in resolve_thingino).
     #[serde(rename = "ref", default)]
     req_ref: String,
+    // Extra build options (ids from BUILD_OPTIONS); validated against the allowlist.
+    #[serde(default)]
+    options: Vec<String>,
 }
 
 async fn post_build(
@@ -1081,6 +1212,13 @@ async fn post_build(
     if !thingino.set.contains(&defconfig) {
         return json_err(StatusCode::BAD_REQUEST, "unknown defconfig");
     }
+    // Options are allowlisted ids; canonical form (sorted, deduped, comma-joined) is
+    // what gets stored and dispatched, so (defconfig, commit, options) dedup works
+    // regardless of the order the client sent them in.
+    let options = match normalize_options(&req.options) {
+        Ok(o) => o,
+        Err(e) => return json_err(StatusCode::BAD_REQUEST, &e),
+    };
     let uid = resolve_uid(&headers);
     let client = client_ip(&headers, peer, &st.cfg.ip_header);
     let ip_full = client.to_string();
@@ -1104,13 +1242,14 @@ async fn post_build(
         // Hourly window, but never count builds created before an admin "reset limits".
         let reset_ts = get_setting(&conn, "limits_reset_ts").and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
         let cutoff = (now_ts - WINDOW_SECS).max(reset_ts);
-        // Dedup: same (defconfig, commit) already built (within retention) or in flight → reuse it.
+        // Dedup: same (defconfig, commit, options) already built (within retention) or in flight → reuse it.
         if let Some(c) = commit.as_deref() {
-            if let Some((eid, estate, edl)) = find_existing(&conn, &defconfig, c, now_ts - lim.retention, &st.cfg) {
+            if let Some((eid, estate, edl)) = find_existing(&conn, &defconfig, c, &options, now_ts - lim.retention, &st.cfg) {
                 log_event_geo(&conn, "dedup", Some(&eid), Some(&uid), Some(&ip), &format!("reused {estate} for {defconfig}"), Some(&ip_full), country.as_deref());
                 return json_uid(StatusCode::OK, &uid, json!({
                     "build_id": eid,
                     "defconfig": defconfig,
+                    "options": options,
                     "state": estate,
                     "deduped": true,
                     "download_url": edl,
@@ -1159,13 +1298,14 @@ async fn post_build(
             return json_uid(StatusCode::TOO_MANY_REQUESTS, &uid, json!({"error": "too many builds from your network this hour — try again later"}));
         }
         if let Err(e) = conn.execute(
-            "INSERT INTO builds(id, uid, ip_bucket, ip_full, defconfig, state, created_ts, commit_sha, ref, country) VALUES (?1,?2,?3,?4,?5,'queued',?6,?7,?8,?9)",
-            rusqlite::params![build_id, uid, ip, ip_full, defconfig, now_ts, commit, git_ref, country],
+            "INSERT INTO builds(id, uid, ip_bucket, ip_full, defconfig, state, created_ts, commit_sha, ref, country, options) VALUES (?1,?2,?3,?4,?5,'queued',?6,?7,?8,?9,?10)",
+            rusqlite::params![build_id, uid, ip, ip_full, defconfig, now_ts, commit, git_ref, country, options],
         ) {
             tracing::error!("insert failed: {e}");
             return json_err(StatusCode::INTERNAL_SERVER_ERROR, "internal error");
         }
-        log_event_geo(&conn, "queued", Some(&build_id), Some(&uid), Some(&ip), &defconfig, Some(&ip_full), country.as_deref());
+        let queue_detail = if options.is_empty() { defconfig.clone() } else { format!("{defconfig} [{options}]") };
+        log_event_geo(&conn, "queued", Some(&build_id), Some(&uid), Some(&ip), &queue_detail, Some(&ip_full), country.as_deref());
         conn.query_row("SELECT count(*) FROM builds WHERE state='queued'", [], |r| r.get(0)).unwrap_or(1)
     };
 
@@ -1175,6 +1315,7 @@ async fn post_build(
         json!({
             "build_id": build_id,
             "defconfig": defconfig,
+            "options": options,
             "state": "queued",
             "position": position,
             "status_url": format!("/api/status/{build_id}"),
@@ -1191,11 +1332,11 @@ fn status_payload(conn: &Connection, cfg: &Config, id: &str) -> Option<serde_jso
     if !valid_build_id(id) {
         return None;
     }
-    let (defconfig, real_state, created_ts, dispatched_ts, finished_ts, cancel_req) = conn
+    let (defconfig, real_state, created_ts, dispatched_ts, finished_ts, cancel_req, options) = conn
         .query_row(
-            "SELECT defconfig, state, created_ts, dispatched_ts, finished_ts, cancel_requested FROM builds WHERE id=?1",
+            "SELECT defconfig, state, created_ts, dispatched_ts, finished_ts, cancel_requested, COALESCE(options,'') FROM builds WHERE id=?1",
             [id],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?, r.get::<_, Option<i64>>(3)?, r.get::<_, Option<i64>>(4)?, r.get::<_, i64>(5)?)),
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?, r.get::<_, Option<i64>>(3)?, r.get::<_, Option<i64>>(4)?, r.get::<_, i64>(5)?, r.get::<_, String>(6)?)),
         )
         .optional().ok().flatten()?;
     let now_ts = now();
@@ -1219,6 +1360,7 @@ fn status_payload(conn: &Connection, cfg: &Config, id: &str) -> Option<serde_jso
     Some(json!({
         "build_id": id,
         "defconfig": defconfig,
+        "options": options,
         "state": state,
         "ready": ready,
         "position": position,
@@ -2142,16 +2284,18 @@ async fn admin_accept_invite(State(st): State<AppState>, Json(body): Json<Accept
 
 // ---- query helpers --------------------------------------------------------
 
-/// Find an existing build for this exact (defconfig, commit) that's worth reusing:
-/// in flight (queued/running, not being cancelled) or done within the retention window.
-fn find_existing(conn: &Connection, defconfig: &str, commit: &str, done_cutoff: i64, cfg: &Config) -> Option<(String, String, Option<String>)> {
+/// Find an existing build for this exact (defconfig, commit, options) that's worth
+/// reusing: in flight (queued/running, not being cancelled) or done within the
+/// retention window. Options are part of the key: an image built without NetConsole
+/// is not the image a NetConsole request wants.
+fn find_existing(conn: &Connection, defconfig: &str, commit: &str, options: &str, done_cutoff: i64, cfg: &Config) -> Option<(String, String, Option<String>)> {
     conn.query_row(
         "SELECT id, state, cancel_requested FROM builds
-         WHERE defconfig=?1 AND commit_sha=?2
-           AND (state IN ('queued','running') OR (state='done' AND finished_ts > ?3))
+         WHERE defconfig=?1 AND commit_sha=?2 AND COALESCE(options,'')=?3
+           AND (state IN ('queued','running') OR (state='done' AND finished_ts > ?4))
            AND NOT (state='running' AND cancel_requested=1)
          ORDER BY created_ts DESC LIMIT 1",
-        rusqlite::params![defconfig, commit, done_cutoff],
+        rusqlite::params![defconfig, commit, options, done_cutoff],
         |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?)),
     )
     .optional().ok().flatten()
@@ -2163,11 +2307,11 @@ fn find_existing(conn: &Connection, defconfig: &str, commit: &str, done_cutoff: 
 }
 
 fn latest_user_build(conn: &Connection, cfg: &Config, uid: &str, now_ts: i64) -> Option<serde_json::Value> {
-    let (id, defconfig, real_state, created_ts, dispatched_ts, finished_ts, cancel_req) = conn
+    let (id, defconfig, real_state, created_ts, dispatched_ts, finished_ts, cancel_req, options) = conn
         .query_row(
-            "SELECT id, defconfig, state, created_ts, dispatched_ts, finished_ts, cancel_requested FROM builds WHERE uid=?1 ORDER BY created_ts DESC LIMIT 1",
+            "SELECT id, defconfig, state, created_ts, dispatched_ts, finished_ts, cancel_requested, COALESCE(options,'') FROM builds WHERE uid=?1 ORDER BY created_ts DESC LIMIT 1",
             [uid],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, i64>(3)?, r.get::<_, Option<i64>>(4)?, r.get::<_, Option<i64>>(5)?, r.get::<_, i64>(6)?)),
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, i64>(3)?, r.get::<_, Option<i64>>(4)?, r.get::<_, Option<i64>>(5)?, r.get::<_, i64>(6)?, r.get::<_, String>(7)?)),
         )
         .optional().ok().flatten()?;
     let state = if real_state == "running" && cancel_req != 0 { "cancelling".to_string() } else { real_state };
@@ -2187,6 +2331,7 @@ fn latest_user_build(conn: &Connection, cfg: &Config, uid: &str, now_ts: i64) ->
     Some(json!({
         "build_id": id,
         "defconfig": defconfig,
+        "options": options,
         "state": state,
         "position": position,
         "elapsed_secs": elapsed,
@@ -2196,7 +2341,7 @@ fn latest_user_build(conn: &Connection, cfg: &Config, uid: &str, now_ts: i64) ->
 
 fn query_recent_builds(conn: &Connection, limit: i64) -> Vec<serde_json::Value> {
     let Ok(mut stmt) = conn.prepare(
-        "SELECT id, defconfig, state, created_ts, dispatched_ts, finished_ts, run_id, cancel_requested, uid, ip_bucket, ip_full, outcome, ref, country FROM builds ORDER BY created_ts DESC LIMIT ?1",
+        "SELECT id, defconfig, state, created_ts, dispatched_ts, finished_ts, run_id, cancel_requested, uid, ip_bucket, ip_full, outcome, ref, country, COALESCE(options,'') FROM builds ORDER BY created_ts DESC LIMIT ?1",
     ) else {
         return vec![];
     };
@@ -2222,6 +2367,7 @@ fn query_recent_builds(conn: &Connection, limit: i64) -> Vec<serde_json::Value> 
             "ip": ip,
             "ip_bucket": ip_bucket,
             "country": r.get::<_, Option<String>>(13)?,
+            "options": r.get::<_, String>(14)?,
         }))
     });
     match it {
@@ -2562,8 +2708,8 @@ struct RunRow {
 
 /// (id, run_id, dispatched_ts, cancel_requested)
 type RunningBuild = (String, Option<i64>, i64, bool);
-/// (id, defconfig, commit_sha)
-type QueuedBuild = (String, String, Option<String>, Option<String>);
+/// (id, defconfig, commit_sha, ref, options)
+type QueuedBuild = (String, String, Option<String>, Option<String>, String);
 
 async fn scheduler_step(st: &AppState) -> anyhow::Result<()> {
     let now_ts = now();
@@ -2601,9 +2747,9 @@ async fn scheduler_step(st: &AppState) -> anyhow::Result<()> {
         };
         let slots = (lim.max_concurrent - running.len() as i64).max(0);
         let to_dispatch: Vec<QueuedBuild> = if slots > 0 {
-            let mut q = conn.prepare("SELECT id, defconfig, commit_sha, ref FROM builds WHERE state='queued' ORDER BY created_ts ASC LIMIT ?1")?;
+            let mut q = conn.prepare("SELECT id, defconfig, commit_sha, ref, COALESCE(options,'') FROM builds WHERE state='queued' ORDER BY created_ts ASC LIMIT ?1")?;
             let rows = q
-                .query_map([slots], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?, r.get::<_, Option<String>>(3)?)))?
+                .query_map([slots], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?, r.get::<_, Option<String>>(3)?, r.get::<_, String>(4)?)))?
                 .filter_map(|x| x.ok())
                 .collect::<Vec<_>>();
             rows
@@ -2695,7 +2841,7 @@ async fn scheduler_step(st: &AppState) -> anyhow::Result<()> {
     }
 
     // 4) Dispatch from the queue into free slots.
-    for (id, defconfig, commit, git_ref) in &to_dispatch {
+    for (id, defconfig, commit, git_ref, options) in &to_dispatch {
         let still_queued: bool = {
             let conn = st.db.lock();
             conn.query_row("SELECT 1 FROM builds WHERE id=?1 AND state='queued'", [id], |_| Ok(())).optional().ok().flatten().is_some()
@@ -2703,7 +2849,7 @@ async fn scheduler_step(st: &AppState) -> anyhow::Result<()> {
         if !still_queued {
             continue;
         }
-        match dispatch_build(st, id, defconfig, commit.as_deref(), git_ref.as_deref()).await {
+        match dispatch_build(st, id, defconfig, commit.as_deref(), git_ref.as_deref(), options).await {
             Ok(()) => {
                 let conn = st.db.lock();
                 conn.execute("UPDATE builds SET state='running', dispatched_ts=?2 WHERE id=?1", rusqlite::params![id, now()]).ok();
@@ -2863,11 +3009,19 @@ async fn check_latest_release(st: &AppState) -> Option<String> {
     tag
 }
 
-async fn dispatch_build(st: &AppState, build_id: &str, defconfig: &str, commit: Option<&str>, git_ref: Option<&str>) -> anyhow::Result<()> {
+async fn dispatch_build(st: &AppState, build_id: &str, defconfig: &str, commit: Option<&str>, git_ref: Option<&str>, options: &str) -> anyhow::Result<()> {
     let url = format!("https://api.github.com/repos/{}/dispatches", st.cfg.github_repo);
     let mut cp = serde_json::Map::new();
     cp.insert("build_id".into(), json!(build_id));
     cp.insert("defconfig".into(), json!(defconfig));
+    // Canonical option ids + the config lines they expand to, comma-joined so the
+    // workflow can inject them into a local.fragment without any JSON parsing. Only
+    // allowlisted ids are ever here (normalized at request time), and the workflow
+    // re-validates both strings' shapes before touching a file.
+    if !options.is_empty() {
+        cp.insert("options".into(), json!(options));
+        cp.insert("option_defs".into(), json!(build_option_defs(options)));
+    }
     if let Some(c) = commit {
         cp.insert("commit".into(), json!(c));
     }
@@ -3119,5 +3273,67 @@ mod totp_seal_tests {
         let fixture = std::env::var("WORKER_SEALED_FIXTURE").unwrap_or_default();
         if fixture.is_empty() { return; } // provided by the shell test driver
         assert_eq!(open_totp(&cfg, &fixture).as_deref(), Some("JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"));
+    }
+}
+
+#[cfg(test)]
+mod build_option_tests {
+    use super::*;
+
+    #[test]
+    fn normalize_sorts_dedupes_and_rejects_unknown() {
+        assert_eq!(normalize_options(&[]).unwrap(), "");
+        assert_eq!(normalize_options(&["netconsole".into()]).unwrap(), "netconsole");
+        // canonical form is order-independent and deduped, so (defconfig, commit,
+        // options) dedup hits regardless of what the client sent.
+        assert_eq!(normalize_options(&["netconsole".into(), "netconsole".into()]).unwrap(), "netconsole");
+        // empty ids (a trailing comma in a hand-written link) are ignored
+        assert_eq!(normalize_options(&["netconsole".into(), "".into()]).unwrap(), "netconsole");
+        // anything not on the allowlist is refused outright, with nothing echoed into
+        // the error beyond the id itself (which the caller returns as a 400 body).
+        assert!(normalize_options(&["BR2_SOMETHING_ELSE=y".into()]).is_err());
+        assert!(normalize_options(&["netconsole; rm -rf /".into()]).is_err());
+        assert!(normalize_options(&["NetConsole".into()]).is_err(), "ids are case-sensitive");
+    }
+
+    #[test]
+    fn defs_expand_only_allowlisted_lines() {
+        assert_eq!(build_option_defs(""), "");
+        assert_eq!(build_option_defs("netconsole"), "BR2_PACKAGE_THINGINO_UBOOT_NETCONSOLE=y");
+        // unknown ids contribute nothing (dispatch only ever passes normalized input)
+        assert_eq!(build_option_defs("netconsole,nope"), "BR2_PACKAGE_THINGINO_UBOOT_NETCONSOLE=y");
+        // every allowlisted option's defs are whole BR2_* assignment lines -- the shape
+        // the workflow re-validates before writing them into the fragment.
+        for o in BUILD_OPTIONS {
+            for line in o.defs {
+                assert!(line.starts_with("BR2_") && line.contains('='), "bad def line: {line}");
+                assert!(!line.contains('\n') && !line.contains(','), "def line must be single-line, comma-free: {line}");
+            }
+        }
+    }
+
+    #[test]
+    fn option_text_falls_back_lang_then_english() {
+        let f = [("","Eng"),("sk","SK"),("de","DE")][..].to_vec();
+        assert_eq!(build_option_text(&f, "sk", "id"), "SK");
+        assert_eq!(build_option_text(&f, "de", "id"), "DE");
+        assert_eq!(build_option_text(&f, "ja", "id"), "Eng", "untranslated falls back to untagged");
+        assert_eq!(build_option_text(&[], "sk", "id"), "id", "no fields at all -> fallback");
+    }
+
+    #[test]
+    fn accept_lang_takes_the_highest_q_primary_tag() {
+        let mut h = HeaderMap::new();
+        h.insert(header::ACCEPT_LANGUAGE, "sk-SK,cs;q=0.8,en;q=0.5".parse().unwrap());
+        assert_eq!(accept_lang(&h), "sk");
+        let mut h = HeaderMap::new();
+        h.insert(header::ACCEPT_LANGUAGE, "en-US".parse().unwrap());
+        assert_eq!(accept_lang(&h), "en");
+        // q=0 tags never send; '*' is not a language.
+        let mut h = HeaderMap::new();
+        h.insert(header::ACCEPT_LANGUAGE, "*;q=1.0,de;q=0.0,fr;q=0.7".parse().unwrap());
+        assert_eq!(accept_lang(&h), "fr");
+        let h = HeaderMap::new();
+        assert_eq!(accept_lang(&h), "");
     }
 }

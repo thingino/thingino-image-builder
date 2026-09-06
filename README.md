@@ -31,10 +31,19 @@ browser ──POST /api/build──▶ Rust broker ──repository_dispatch─�
   `<branch>@<hash>` commit badge track the choice. Which branches are on offer is an
   admin setting (the *Buildable branches* card picks them from the firmware repo's
   real branch list), so the page reads them from the API rather than hardcoding them.
-- **Share links**: `?board=<defconfig>&branch=<ref>` opens the page with that
-  camera and branch already selected (never auto-building), and the **Copy link**
-  button produces one from the current selection. A camera that isn't on the
-  linked branch says so and offers a one-click switch to a branch that has it.
+- **Build options**: optional extra features rendered as checkboxes from a small
+  server-side **allowlist** (`GET /api/build-options`, localized), not free-form
+  config. Current options: **NetConsole** (U-Boot console over UDP,
+  `BR2_PACKAGE_THINGINO_UBOOT_NETCONSOLE=y`). The workflow injects the selected
+  symbols through thingino's supported `user/common/local.fragment` layer; symbols a
+  board can't honor are dropped by Kconfig. Options are part of the dedup key, and a
+  share link can carry them (`?opts=netconsole`). Both backends (Rust broker and
+  Cloudflare Worker) serve the same catalog and forward options to the build.
+- **Share links**: `?board=<defconfig>&branch=<ref>[&opts=<ids>]` opens the page with
+  that camera, branch, and build options already selected (never auto-building), and
+  the **Copy link** button produces one from the current selection. A camera that
+  isn't on the linked branch says so and offers a one-click switch to a branch that
+  has it.
 - **Dedup**: an identical `(defconfig, commit)` that's in flight or built within
   the window is reused, not rebuilt.
 - **Limits**: per-user **2/hr**, per-IP **3/hr** (IPv6 bucketed by /64), global

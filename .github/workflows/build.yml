@@ -2,7 +2,9 @@
 #
 # Triggered by the broker via repository_dispatch:
 #   event_type: web-build
-#   client_payload: { "build_id": "<uuid>", "defconfig": "<board token>" }
+#   client_payload: { "build_id": "<uuid>", "defconfig": "<board token>",
+#                     "options": "<id>[,<id>...]", "option_defs": "BR2_*=y[,...]" }
+#   (options/option_defs are absent when no extra options are selected)
 #
 # Mirrors the proven recipe in themactep/thingino-firmware/.github/workflows/
 # firmware-x86_64.yaml (debian:forky container, apt deps, ccache + dl-cache),
@@ -31,6 +33,12 @@ on:
         description: "thingino branch the commit belongs to (blank = master)"
         required: false
         default: master
+      options:
+        description: "Extra build options (comma-separated ids, e.g. netconsole)"
+        required: false
+      option_defs:
+        description: "Buildroot lines for the options (comma-separated BR2_*=y, from the broker allowlist)"
+        required: false
       runner_arch:
         description: "Runner architecture"
         type: choice
@@ -77,6 +85,8 @@ jobs:
           RAW_BUILD_ID: ${{ github.event.client_payload.build_id || github.event.inputs.build_id }}
           RAW_COMMIT: ${{ github.event.client_payload.commit || github.event.inputs.commit }}
           RAW_REF: ${{ github.event.client_payload.ref || github.event.inputs.ref }}
+          RAW_OPTIONS: ${{ github.event.client_payload.options || github.event.inputs.options }}
+          RAW_OPTION_DEFS: ${{ github.event.client_payload.option_defs || github.event.inputs.option_defs }}
         run: |
           set -euo pipefail
           DEFCONFIG="${RAW_DEFCONFIG:-}"
@@ -115,10 +125,35 @@ jobs:
           echo "build_id=$BUILD_ID" >> "$GITHUB_OUTPUT"
           echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
           echo "ref=$REF" >> "$GITHUB_OUTPUT"
+          # options: comma-separated allowlisted ids (broker canonicalises: lowercase,
+          # sorted, deduped). Shape-only here; the broker is what maps ids to config lines.
+          OPTIONS="${RAW_OPTIONS:-}"
+          if [[ -n "$OPTIONS" ]] && [[ ! "$OPTIONS" =~ ^[a-z0-9_-]+(,[a-z0-9_-]+)*$ ]]; then
+            echo "::error::Invalid options: '$OPTIONS'"; exit 1
+          fi
+          # option_defs: comma-separated whole BR2_* assignment lines. The broker only
+          # ever emits its allowlist, but workflow_dispatch hands these straight to a
+          # human, so this shape check is the actual boundary: nothing that isn't a
+          # single-line BR2_<SYMBOL>=<value> with a conservative value charset reaches
+          # the fragment file, and only that file receives them.
+          OPTION_DEFS="${RAW_OPTION_DEFS:-}"
+          if [[ -n "$OPTION_DEFS" ]]; then
+            if [[ -z "$OPTIONS" ]]; then echo "::error::option_defs without options"; exit 1; fi
+            # Regex in a variable: unquoted =~ would let shell quoting eat the brackets.
+            odef_re='^BR2_[A-Z0-9_]+=[A-Za-z0-9._/+"]+$'
+            IFS=',' read -ra ODEFS <<< "$OPTION_DEFS"
+            for d in "${ODEFS[@]}"; do
+              if [[ ! "$d" =~ $odef_re ]]; then
+                echo "::error::Invalid option def: '$d'"; exit 1
+              fi
+            done
+          fi
+          echo "options=$OPTIONS" >> "$GITHUB_OUTPUT"
           {
             echo "## web-build \`$BUILD_ID\`"
             echo "- defconfig: \`$DEFCONFIG\`"
             echo "- commit: \`$COMMIT\` (\`$REF\`)"
+            [[ -n "$OPTIONS" ]] && echo "- options: \`$OPTIONS\`"
             echo "- runner: \`${{ runner.arch }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -300,6 +335,24 @@ jobs:
           # user" the moment dep_check.sh grows a package we haven't mirrored yet.
           make update WORKFLOW=1
           make patch-buildroot WORKFLOW=1
+
+      - name: Apply selected build options
+        if: steps.in.outputs.options != ''
+        env:
+          OPTIONS: ${{ steps.in.outputs.options }}
+          OPTION_DEFS: ${{ steps.in.outputs.option_defs }}
+        run: |
+          set -euo pipefail
+          # thingino's user config layer: user/common/local.fragment is merged into the
+          # build config after the camera defconfig, which is the supported way to flip
+          # extra BR2 symbols per build (docs: config model in AGENTS.md). Symbols whose
+          # dependencies aren't met on this board are dropped by Kconfig at config time,
+          # exactly like any menuconfig choice that becomes unavailable.
+          mkdir -p thingino/user/common
+          printf '%s\n' "$OPTION_DEFS" | tr ',' '\n' > thingino/user/common/local.fragment
+          echo "Build options: $OPTIONS"
+          echo "- options: \`$OPTIONS\`" >> "$GITHUB_STEP_SUMMARY"
+          cat thingino/user/common/local.fragment
 
       - name: Build firmware
         env:

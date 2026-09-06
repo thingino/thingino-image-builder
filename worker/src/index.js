@@ -233,6 +233,85 @@ async function refConfig(env) {
 }
 const normRefWith = (rc, ref) => (rc.enabled.includes(ref) ? ref : rc.default);
 
+// ---- selectable build options ----------------------------------------------
+// The allowlist is the single source of truth (mirrors BUILD_OPTIONS in the Rust
+// broker; keep the two in lockstep — a catalog that diverges sends the UI checkboxes
+// the other backend rejects). A request may only carry ids this list contains, so
+// arbitrary config lines can never reach the build. `defs` holds the Buildroot lines
+// the id expands to; the workflow injects them through thingino's user-layer
+// local.fragment. `label`/`desc` follow the Buildroot Config.in convention: an
+// untagged entry is English, <lang> suffixes are translations, picked by Accept-Language.
+const BUILD_OPTIONS = [
+  {
+    id: "netconsole",
+    defs: ["BR2_PACKAGE_THINGINO_UBOOT_NETCONSOLE=y"],
+    label: [
+      ["", "NetConsole (U-Boot console over UDP)"],
+      ["sk", "NetConsole (konzola U-Bootu cez UDP)"],
+      ["de", "NetConsole (U-Boot-Konsole über UDP)"],
+      ["fr", "NetConsole (console U-Boot sur UDP)"],
+      ["es", "NetConsole (consola de U-Boot por UDP)"],
+    ],
+    desc: [
+      ["", "Get an interactive U-Boot prompt over the network instead of the serial port. Needs a board with Ethernet or USB OTG; only effective on branches whose bootloader supports it (ciao, master)."],
+      ["sk", "Interaktívna konzola U-Bootu po sieti namiesto sériového portu. Vyžaduje dosku s Ethernetom alebo USB OTG; účinné len na vetvách, ktorých bootloader to podporuje (ciao, master)."],
+      ["de", "Interaktive U-Boot-Eingabeaufforderung über das Netzwerk statt der seriellen Schnittstelle. Erfordert ein Board mit Ethernet oder USB OTG; nur wirksam in Zweigen mit unterstützendem Bootloader (ciao, master)."],
+      ["fr", "Invitation de commande U-Boot interactive via le réseau au lieu du port série. Nécessite une carte avec Ethernet ou USB OTG ; efficace uniquement sur les branches dont le bootloader le permet (ciao, master)."],
+      ["es", "Consola interactiva de U-Boot por red en lugar del puerto serie. Requiere una placa con Ethernet u USB OTG; solo tiene efecto en ramas cuyo bootloader lo admite (ciao, master)."],
+    ],
+  },
+];
+const buildOption = (id) => BUILD_OPTIONS.find((o) => o.id === id);
+// Localized field: exact lang → untagged (English) → fallback (mirrors the broker's
+// build_option_text).
+const buildOptionText = (fields, lang, fallback) => {
+  const hit = fields.find(([l]) => l === lang) || fields.find(([l]) => l === "");
+  return hit ? hit[1] : fallback;
+};
+// Validate + canonicalise a requested option-id list (mirrors normalize_options):
+// unknown ids → "unknown option: <id>" (400), dupes dropped, result sorted and
+// comma-joined; null = ok with this canonical string. Empty id strings are ignored,
+// not an error, so a trailing comma in a hand-written share link doesn't fail the build.
+function normalizeOptions(req) {
+  if (!Array.isArray(req)) return { error: null, options: "" };
+  const ids = [];
+  for (const s of req) {
+    if (typeof s !== "string" || s === "") continue;
+    if (!buildOption(s)) return { error: `unknown option: ${s}`, options: null };
+    if (!ids.includes(s)) ids.push(s);
+  }
+  return { error: null, options: ids.sort().join(",") };
+}
+// Canonical options string → the Buildroot lines the workflow injects.
+const buildOptionDefs = (options) =>
+  options.split(",").filter(buildOption).flatMap((o) => o.defs).join(",");
+// Primary language of Accept-Language: first quality-ordered tag, region stripped,
+// q<=0 and "*" skipped (mirrors the broker's accept_lang).
+function acceptLang(request) {
+  const raw = request.headers.get("accept-language") || "";
+  let best = null; // [q, tag]
+  for (const part of raw.split(",")) {
+    const [tagRaw, qRaw] = part.trim().split(";q=");
+    const tag = (tagRaw || "").trim();
+    if (!tag || tag === "*") continue;
+    const q = qRaw !== undefined ? parseFloat(qRaw) : 1;
+    if (!(q > 0)) continue;
+    if (!best || q > best[0]) best = [q, tag];
+  }
+  return best ? best[1].split("-")[0].toLowerCase() : "";
+}
+async function handleBuildOptions(request, env) {
+  const lang = acceptLang(request);
+  return json(
+    BUILD_OPTIONS.map((o) => ({
+      id: o.id,
+      label: buildOptionText(o.label, lang, o.id),
+      desc: buildOptionText(o.desc, lang, ""),
+    })),
+    200, env
+  );
+}
+
 // thingino pinned commit + defconfig list, per branch, cached in D1 settings (~5 min).
 // `rc` lets a caller that already read the branch config pass it in, so a stats poll
 // resolves the ref and reports the list off one read instead of two.
@@ -385,6 +464,12 @@ async function handleBuild(request, env) {
   const ref = normRefWith(rc, body.ref);
   const { commit, list } = await resolveThingino(env, ref, rc);
   if (!list.includes(defconfig)) return json({ error: "unknown defconfig" }, 400, env);
+  // Options are allowlisted ids; the canonical form (sorted, deduped, comma-joined)
+  // is what gets stored and dispatched, so (defconfig, commit, options) dedup works
+  // regardless of the order the client sent them in. Mirrors the broker's post_build.
+  const opt = normalizeOptions(body.options);
+  if (opt.error) return json({ error: opt.error }, 400, env);
+  const options = opt.options;
 
   const uid = resolveUid(request);
   const ts = nowSec(), cfg = await limits(env);
@@ -395,20 +480,21 @@ async function handleBuild(request, env) {
   if ((await getSetting(env, "builds_enabled")) === "0")
     return json({ error: "builds are temporarily disabled during maintenance, check back later" }, 503, env);
 
-  // Dedup: identical (defconfig, commit) in flight or done within retention.
+  // Dedup: identical (defconfig, commit, options) in flight or done within retention.
+  // An image built without NetConsole is not the image a NetConsole request wants.
   if (commit) {
     const e = await env.DB.prepare(
       `SELECT id,state,cancel_requested FROM builds
-       WHERE defconfig=? AND commit_sha=?
+       WHERE defconfig=? AND commit_sha=? AND COALESCE(options,'')=?
          AND (state IN ('queued','running') OR (state='done' AND finished_ts > ?))
          AND NOT (state='running' AND cancel_requested=1)
        ORDER BY created_ts DESC LIMIT 1`
-    ).bind(defconfig, commit, ts - cfg.retention).first();
+    ).bind(defconfig, commit, options, ts - cfg.retention).first();
     if (e) {
       await logEvent(env, "dedup", e.id, uid, ip, `reused ${e.state} for ${defconfig}`, rawIp, reqCountry(request));
       const st = e.state === "running" && e.cancel_requested ? "cancelling" : e.state;
       return json({
-        build_id: e.id, defconfig, state: st, deduped: true,
+        build_id: e.id, defconfig, options, state: st, deduped: true,
         download_url: st === "done" ? assetUrl(env, e.id) : null,
         status_url: `/api/status/${e.id}`, commit,
       }, 200, env);
@@ -423,13 +509,13 @@ async function handleBuild(request, env) {
   // INSERT, so a concurrent burst can't slip past separate check-then-insert reads.
   const id = uuid();
   const ins = await env.DB.prepare(
-    `INSERT INTO builds(id,uid,ip_bucket,ip_full,defconfig,state,created_ts,commit_sha,ref,country)
-     SELECT ?,?,?,?,?,'queued',?,?,?,?
+    `INSERT INTO builds(id,uid,ip_bucket,ip_full,defconfig,state,created_ts,commit_sha,ref,country,options)
+     SELECT ?,?,?,?,?,'queued',?,?,?,?,?
      WHERE (SELECT count(*) FROM builds WHERE created_ts > ? AND ${notCancelledUndispatched}) < ?
        AND (SELECT count(*) FROM builds WHERE uid=? AND created_ts > ? AND ${notCancelledUndispatched}) < ?
        AND (SELECT count(*) FROM builds WHERE ip_bucket=? AND created_ts > ? AND ${notCancelledUndispatched}) < ?`
   ).bind(
-    id, uid, ip, rawIp, defconfig, ts, commit, ref, reqCountry(request),
+    id, uid, ip, rawIp, defconfig, ts, commit, ref, reqCountry(request), options,
     cutoff, cfg.globalHourly,
     uid, cutoff, cfg.userHourly,
     ip, cutoff, cfg.ipHourly,
@@ -445,7 +531,7 @@ async function handleBuild(request, env) {
       return json({ error: `you've reached ${cfg.userHourly} builds this hour — try again later` }, 429, env);
     return json({ error: "too many builds from your network this hour — try again later" }, 429, env);
   }
-  await logEvent(env, "queued", id, uid, ip, defconfig, rawIp, reqCountry(request));
+  await logEvent(env, "queued", id, uid, ip, options ? `${defconfig} [${options}]` : defconfig, rawIp, reqCountry(request));
 
   // Inline dispatch: if a slot is free, fire the build NOW rather than waiting for
   // the next cron tick. The cron is only a fallback/reconciler for the rest.
@@ -456,7 +542,7 @@ async function handleBuild(request, env) {
     const claim = await env.DB.prepare("UPDATE builds SET state='running', dispatched_ts=? WHERE id=? AND state='queued' AND (SELECT count(*) FROM builds WHERE state='running') < ?").bind(nowSec(), id, cfg.maxConcurrent).run();
     if ((claim.meta?.changes ?? 0) === 1) {
       try {
-        await dispatchBuild(env, id, defconfig, commit, ref);
+        await dispatchBuild(env, id, defconfig, commit, ref, options);
         await logEvent(env, "dispatched", id, uid, ip, defconfig);
         state = "running";
       } catch (_) {
@@ -466,7 +552,7 @@ async function handleBuild(request, env) {
     }
   }
   if (state === "queued") position = await countQ(env, "SELECT count(*) c FROM builds WHERE state='queued'");
-  return json({ build_id: id, defconfig, state, position, status_url: `/api/status/${id}`, download_url: assetUrl(env, id), commit }, 202, env);
+  return json({ build_id: id, defconfig, options, state, position, status_url: `/api/status/${id}`, download_url: assetUrl(env, id), commit }, 202, env);
 }
 // One build's public status object, shared by /api/status and /api/stats?my= (the
 // page piggybacks its own build's status on the stats poll: one request, not two).
@@ -474,7 +560,7 @@ async function handleBuild(request, env) {
 async function statusPayload(env, id) {
   if (!validBuildId(id)) return null;
   const b = await env.DB.prepare(
-    "SELECT defconfig,state,created_ts,dispatched_ts,finished_ts,cancel_requested FROM builds WHERE id=?"
+    "SELECT defconfig,state,created_ts,dispatched_ts,finished_ts,cancel_requested,COALESCE(options,'') AS options FROM builds WHERE id=?"
   ).bind(id).first();
   if (!b) return null;
   const ts = nowSec();
@@ -487,7 +573,7 @@ async function statusPayload(env, id) {
   else if (state === "queued") elapsed = ts - b.created_ts;
   else if (b.finished_ts && b.dispatched_ts) elapsed = b.finished_ts - b.dispatched_ts;
   const ready = state === "done";
-  return { build_id: id, defconfig: b.defconfig, state, ready, position, elapsed_secs: elapsed, download_url: ready ? assetUrl(env, id) : null };
+  return { build_id: id, defconfig: b.defconfig, options: b.options || "", state, ready, position, elapsed_secs: elapsed, download_url: ready ? assetUrl(env, id) : null };
 }
 async function handleStatus(id, env) {
   if (!validBuildId(id)) return json({ error: "bad build_id" }, 400, env);
@@ -554,7 +640,7 @@ async function handleAdminExpire(id, request, env) {
 }
 
 // ---- scheduler (cron) -----------------------------------------------------
-async function dispatchBuild(env, id, defconfig, commit, ref) {
+async function dispatchBuild(env, id, defconfig, commit, ref, options) {
   // ref rides along so CI can pick the matching upstream ccache channel and name the
   // build branch; the workflow re-validates its shape before it reaches a command line.
   //
@@ -564,6 +650,14 @@ async function dispatchBuild(env, id, defconfig, commit, ref) {
   // already pinned, so coercing the name would only mislabel what CI actually builds.
   const cp = { build_id: id, defconfig, ref: validRefName(ref) ? ref : REF_FALLBACK[0] };
   if (commit) cp.commit = commit;
+  // Canonical option ids + the config lines they expand to, comma-joined so the
+  // workflow can inject them into a local.fragment without any JSON parsing. Only
+  // allowlisted ids are ever here (normalized at request time), and the workflow
+  // re-validates both strings' shapes before touching a file.
+  if (options) {
+    cp.options = options;
+    cp.option_defs = buildOptionDefs(options);
+  }
   const r = await ghFetch(env, `https://api.github.com/repos/${env.GITHUB_REPO}/dispatches`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -693,7 +787,7 @@ async function schedulerWork(env, ts, warm) {
   const running = ((await env.DB.prepare("SELECT id,run_id,dispatched_ts,cancel_requested FROM builds WHERE state='running'").all()).results) || [];
   const slots = Math.max(0, cfg.maxConcurrent - running.length);
   const queued = slots > 0
-    ? ((await env.DB.prepare("SELECT id,defconfig,commit_sha,ref FROM builds WHERE state='queued' ORDER BY created_ts ASC LIMIT ?").bind(slots).all()).results) || []
+    ? ((await env.DB.prepare("SELECT id,defconfig,commit_sha,ref,COALESCE(options,'') AS options FROM builds WHERE state='queued' ORDER BY created_ts ASC LIMIT ?").bind(slots).all()).results) || []
     : [];
 
   const runs = running.length ? await fetchRuns(env) : [];
@@ -763,7 +857,7 @@ async function schedulerWork(env, ts, warm) {
     const claim = await env.DB.prepare("UPDATE builds SET state='running', dispatched_ts=? WHERE id=? AND state='queued' AND (SELECT count(*) FROM builds WHERE state='running') < ?").bind(nowSec(), q.id, cfg.maxConcurrent).run();
     if ((claim.meta?.changes ?? 0) !== 1) continue;
     try {
-      await dispatchBuild(env, q.id, q.defconfig, q.commit_sha, q.ref);
+      await dispatchBuild(env, q.id, q.defconfig, q.commit_sha, q.ref, q.options);
       await logEvent(env, "dispatched", q.id, null, null, q.defconfig);
     } catch (_) {
       // Release the claim back to queued, count the attempt, and fail after 3 tries.
@@ -1159,8 +1253,8 @@ async function handleAdminStats(request, env) {
   for (const s of ["queued", "running", "done", "failed", "cancelled", "expired"])
     counts[s] = await countQ(env, "SELECT count(*) c FROM builds WHERE state=?", s);
   const avg = await env.DB.prepare("SELECT avg(finished_ts - dispatched_ts) a FROM builds WHERE (outcome='done' OR (outcome IS NULL AND state='done')) AND finished_ts IS NOT NULL AND dispatched_ts IS NOT NULL").first();
-  const builds = ((await env.DB.prepare("SELECT id,defconfig,ref,state,outcome,created_ts,dispatched_ts,finished_ts,run_id,cancel_requested,uid,ip_bucket,ip_full,country FROM builds ORDER BY created_ts DESC LIMIT ?").bind(bLimit).all()).results || []).map((b) => ({
-    build_id: b.id, defconfig: b.defconfig, ref: b.ref,
+  const builds = ((await env.DB.prepare("SELECT id,defconfig,ref,state,outcome,created_ts,dispatched_ts,finished_ts,run_id,cancel_requested,uid,ip_bucket,ip_full,country,COALESCE(options,'') AS options FROM builds ORDER BY created_ts DESC LIMIT ?").bind(bLimit).all()).results || []).map((b) => ({
+    build_id: b.id, defconfig: b.defconfig, ref: b.ref, options: b.options,
     state: b.state === "running" && b.cancel_requested ? "cancelling" : b.state,
     outcome: b.outcome,
     created_ts: b.created_ts, dispatched_ts: b.dispatched_ts, finished_ts: b.finished_ts, run_id: b.run_id, uid: b.uid,
@@ -1384,6 +1478,7 @@ export default {
     try {
       if (p === "/api/health") return new Response("ok", { headers: cors(env) });
       if (p === "/api/defconfigs" && request.method === "GET") return await handleDefconfigs(env, url.searchParams.get("ref"));
+      if (p === "/api/build-options" && request.method === "GET") return await handleBuildOptions(request, env);
       if (p === "/api/stats" && request.method === "GET") return await handleStats(request, env, url.searchParams.get("ref"), url.searchParams.get("my"));
       if (p === "/api/build" && request.method === "POST") return await handleBuild(request, env);
       let m;

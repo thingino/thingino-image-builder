@@ -22,6 +22,44 @@
 
   let allowed=new Set(), maxConc=6, avgSecs=null, userHourly=2, retentionMins=30, curCommit=null, you=null, youAt=0;
   const ACTIVE=new Set(['queued','running','cancelling']);
+  /* ---- extra build options (allowlisted by the broker; id -> checkbox) ----------
+   * Fetched once from /api/build-options with the page's language. A 404 (broker
+   * predating the endpoint) leaves the list empty and the section hidden: nothing
+   * here is required for a plain build. Selection is remembered across visits. */
+  const OPTS_KEY='thingino_opts', OPT_RE=/^[a-z0-9_-]+(,[a-z0-9_-]+)*$/;   // canonical form the broker accepts
+  let OPTS=[];   // [{id,label,desc}] as delivered
+  // Session-level selection override: a share link's ?opts= applies to this visit only
+  // (same rule as a link's branch: it must not rewrite the saved default), but it has
+  // to survive re-renders (language switch), so it lives here, not just in linkOpts.
+  let sessionOpts=null;
+  function checkedOpts(){ return OPTS.filter(o=>{ const c=document.getElementById('opt-'+o.id); return c&&c.checked; }).map(o=>o.id); }
+  function renderOptions(){
+    const box=$('options');
+    if(!box) return;
+    if(!OPTS.length){ box.classList.add('d-none'); box.innerHTML=''; return; }
+    box.innerHTML='<div class="small muted mb-1">'+esc(I18N.t('options_label'))+'</div>'+OPTS.map(o=>
+      '<div class="form-check">'
+      +`<input class="form-check-input build-option" type="checkbox" id="opt-${esc(o.id)}">`
+      +`<label class="form-check-label small" for="opt-${esc(o.id)}">${esc(o.label)}`
+      +(o.desc?`<div class="small muted">${esc(o.desc)}</div>`:'')
+      +'</label></div>').join('');
+    if(linkOpts){ sessionOpts=linkOpts; linkOpts=null; }   // a share link's selection wins once
+    let saved=sessionOpts;
+    if(!saved){ try{ saved=(localStorage.getItem(OPTS_KEY)||'').split(',').filter(Boolean); }catch(_){ saved=[]; } }
+    for(const o of OPTS){ const c=document.getElementById('opt-'+o.id); if(c) c.checked=saved.indexOf(o.id)>=0; }
+    box.classList.remove('d-none');
+    box.querySelectorAll('.build-option').forEach(c=>c.addEventListener('change',()=>{
+      sessionOpts=null;   // an explicit click returns control to the saved preference
+      try{ localStorage.setItem(OPTS_KEY,checkedOpts().join(',')); }catch(_){}
+      syncUrl();
+    }));
+  }
+  async function fetchOptions(){
+    const r=await api('/api/build-options');
+    if(!r.ok||!Array.isArray(r.data)) return;   // older broker / transient error: no options
+    OPTS=r.data.filter(o=>o&&typeof o.id==='string'&&OPT_RE.test(o.id));
+    renderOptions(); syncUrl();
+  }
   // Poll cadence: 5s while your own build is active; idle backs off 15s -> 30s -> 60s;
   // nothing at all while the tab is hidden. wake() snaps back to the fast cadence on user
   // activity (typing, branch switch, tab becoming visible). Declared up here with the rest
@@ -104,13 +142,16 @@
    * build: a link that did would let one forum post burn the global hourly cap for
    * everyone who clicked it. */
   const DEFCONFIG_RE=/^[a-z0-9_+]+$/;   // the token shape the Worker and build.yml enforce
-  let linkBoard='', linkRef='', linkMsg=null, linkProbed=false;
+  let linkBoard='', linkRef='', linkMsg=null, linkProbed=false, linkOpts=null;
   (function readLink(){
     const q=new URLSearchParams(location.search);
-    const b=(q.get('board')||'').trim(), r=(q.get('branch')||'').trim();
+    const b=(q.get('board')||'').trim(), r=(q.get('branch')||'').trim(), o=(q.get('opts')||'').trim();
     // The bad token is not echoed back into the page: it came from the URL, so it is
     // attacker-controlled, and the message reads fine without it.
     if(b){ if(DEFCONFIG_RE.test(b)) linkBoard=b; else linkMsg={k:'link_bad_board',sticky:1}; }
+    // Options from a link are only shape-checked here; unknown ids are dropped when the
+    // catalog arrives, and the broker is the real gate at build time.
+    if(o&&OPT_RE.test(o)) linkOpts=o.split(',');
     // Kept raw and judged in resolveRef(): whether this branch is offered depends on a
     // list that may not have arrived yet, and a verdict reached against the seed list
     // above would be a guess.
@@ -240,6 +281,7 @@
     const v=$('board').value.trim();
     if(allowed.has(v)) u.searchParams.set('board',v);
     u.searchParams.set('branch',curRef);
+    const o=checkedOpts(); if(o.length) u.searchParams.set('opts',o.join(','));
     return u.toString();
   }
   // Mirror the selection into the address bar so copying it by hand works too. replaceState,
@@ -331,7 +373,7 @@
     picker.classList.toggle('d-none', ACTIVE.has(you.state));
     mb.classList.remove('d-none');
     const live=(you.elapsed_secs||0)+(Date.now()-youAt)/1000;
-    const meta=`<div class="small muted mt-2">${I18N.t('meta_defconfig')} <code>${esc(you.defconfig)}</code><br>${I18N.t('meta_build_id')} <code>${esc(you.build_id)}</code>${you.deduped?`<br><span class="text-warning">${I18N.t('deduped_note')}</span>`:''}</div>`;
+    const meta=`<div class="small muted mt-2">${I18N.t('meta_defconfig')} <code>${esc(you.defconfig)}</code>${you.options?`<br>${I18N.t('meta_options')} <code>${esc(you.options)}</code>`:''}<br>${I18N.t('meta_build_id')} <code>${esc(you.build_id)}</code>${you.deduped?`<br><span class="text-warning">${I18N.t('deduped_note')}</span>`:''}</div>`;
     let h='';
     if(you.state==='queued')
       h=`<div class="alert alert-secondary mb-0">${spin()}<strong>${I18N.t('state_queued')}</strong> ${I18N.t('queued_position',{n:esc(you.position)})}${meta}<div class="mt-2"><button class="btn btn-outline-secondary btn-sm" id="cancel">${I18N.t('cancel_btn')}</button></div></div>`;
@@ -418,10 +460,11 @@
     const defconfig=$('board').value.trim();
     if(!allowed.has(defconfig)) return;
     $('go').disabled=true;
-    const {ok,status,data}=await api('/api/build',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({defconfig,ref:curRef})});
+    const opts=checkedOpts();
+    const {ok,status,data}=await api('/api/build',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({defconfig,ref:curRef,options:opts})});
     if(!ok){ setHint((data&&data.error)||I18N.t('request_failed',{status}),1); $('go').disabled=false; return; }
     setMy(data.build_id);
-    you={build_id:data.build_id, defconfig:data.defconfig, state:data.state||'queued', position:data.position||0, elapsed_secs:0, download_url:data.download_url, deduped:data.deduped};
+    you={build_id:data.build_id, defconfig:data.defconfig, options:data.options||opts.join(','), state:data.state||'queued', position:data.position||0, elapsed_secs:0, download_url:data.download_url, deduped:data.deduped};
     youAt=Date.now(); renderYou(); refresh(true);
   }
 
@@ -516,13 +559,14 @@
   document.addEventListener('keydown',e=>{ if(e.key!=='Escape') return; closeSettings(); showAbout(false); });
   $('setting-help').addEventListener('change',e=>setHelp(e.target.checked));
   I18N.apply(); renderFooterLimits(); I18N.selector('lang-slot'); applyHelpMode();
-  window.addEventListener('i18nchange',()=>{ I18N.apply(); renderFooterLimits(); validate(); renderYou(); renderLinkMsg(); renderBranchOptions(); if(lastStatsData) renderGlobal(lastStatsData); applyHelpMode(); });
+  window.addEventListener('i18nchange',()=>{ I18N.apply(); renderFooterLimits(); validate(); renderYou(); renderLinkMsg(); renderBranchOptions(); if(lastStatsData) renderGlobal(lastStatsData); applyHelpMode(); fetchOptions(); });
   // Seed the picker from a share link before the first list load, so the board is already
   // in place when checkLink() gets to judge it against this branch.
   if(linkBoard) $('board').value=linkBoard;
   // Now that setLinkMsg exists to carry its verdict on the link's branch.
   curRef=resolveRef(); renderBranchOptions();
   renderLinkMsg();
+  fetchOptions();
   loadBoards(); refresh(true);
   setInterval(()=>{
     if(document.hidden) return;

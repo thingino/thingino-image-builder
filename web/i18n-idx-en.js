@@ -31,6 +31,7 @@ I18N.add("en", {
   notice_warning: "Warning",
   notice_caution: "Caution",
   meta_defconfig: "defconfig",
+  meta_options: "options",
   meta_build_id: "build id",
   deduped_note: "reused an existing identical image",
   state_queued: "Queued",
@@ -81,6 +82,10 @@ I18N.add("en", {
   help_lang: "Switch the interface language (auto-detected from your browser).",
   help_settings: "Settings: choose which thingino branch to build from.",
   help_branch: "Pick which thingino branch to build from. The camera list updates to match.",
+  // extra build options (checkbox labels/descriptions come from the broker's catalog;
+  // only this section heading and the help hint are page strings)
+  options_label: "Build options",
+  help_options: "Extra features to compile in. Not every option applies to every camera or branch; unsupported ones are simply ignored by the build.",
   setting_help_label: "Show help hints: hover any control for a tip.",
   privacy_link: "privacy",
   // share links (?board=&branch=) + the copy-link button
