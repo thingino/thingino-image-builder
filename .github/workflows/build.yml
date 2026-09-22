@@ -180,7 +180,7 @@ jobs:
           # branch (named after the build ref) that tracks itself, so the pull is a
           # clean no-op: we build the pinned commit exactly (no drift to branch-
           # latest), thingino's version string + output dir show the real branch,
-          # and make update's submodule-update + patch steps still run.
+          # and make update's submodule update still runs.
           REF="${{ steps.in.outputs.ref }}"
           git checkout -B "$REF"
           git config "branch.${REF}.remote" .
@@ -288,18 +288,21 @@ jobs:
           if [ -d ~/dl/dl ]; then mv ~/dl/dl/* ~/dl/ && rm -rf ~/dl/dl; fi
           echo "dl-cache files: $(find ~/dl -type f | wc -l)"
 
-      - name: Patch buildroot (make update)
+      - name: Fetch buildroot (make update)
         run: |
           set -euo pipefail
           cd thingino
-          # Applies thingino's patches to the buildroot tree. Must run before the
-          # build — some boards fail to build without it.
+          # Clones the pinned buildroot submodule, which already carries thingino's
+          # overrides as commits on the themactep/buildroot fork (older branches
+          # still patch inside make update), so there is no separate patch step.
+          # Don't add make calls here without BOARD=: any target outside board.mk's
+          # NOCAMERA_TARGETS prompts for a camera on /dev/tty, and on CI that dies
+          # with "Camera selection cancelled".
           # WORKFLOW=1 skips the Makefile's dep_check.sh prompt: the install step
           # above already provides every package it wants, and on CI the prompt is
           # answered with EOF, so the build dies at "Installation aborted by the
           # user" the moment dep_check.sh grows a package we haven't mirrored yet.
           make update WORKFLOW=1
-          make patch-buildroot WORKFLOW=1
 
       - name: Build firmware
         env:
