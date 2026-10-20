@@ -1477,7 +1477,10 @@ export class RateLimiter {
 // ---- entrypoints ----------------------------------------------------------
 export default {
   async fetch(request, env, ctx) {
-    if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors(env) });
+    // Every API call carries X-Builder-Uid (admin: Authorization), so browsers preflight them
+    // all, and with no max-age they re-ask every 5 s: a third of all invocations, each one
+    // counted against the account's daily request quota. Browsers clamp this (Chrome to 2 h).
+    if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { ...cors(env), "Access-Control-Max-Age": "86400" } });
     const url = new URL(request.url), p = url.pathname;
     // Whole-API per-IP flood guard, so no endpoint — not just
     // /api/build — can burn the free-tier request/D1 budget (audit H1). This global
