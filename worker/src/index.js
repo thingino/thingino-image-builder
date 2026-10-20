@@ -246,35 +246,64 @@ function refConfigFrom(raw) {
 const refConfig = async (env) => refConfigFrom(await getSetting(env, "branches"));
 const normRefWith = (rc, ref) => (rc.enabled.includes(ref) ? ref : rc.default);
 
-// thingino pinned commit + defconfig list, per branch, cached in D1 settings (~5 min).
-// `rc` lets a caller that already read the branch config pass it in, so a stats poll
-// resolves the ref and reports the list off one read instead of two.
-async function resolveThingino(env, ref, rc) {
-  ref = normRefWith(rc || (await refConfig(env)), ref);
-  const kC = `thingino_commit_${ref}`, kL = `defconfigs_${ref}`, kT = `thingino_ts_${ref}`;
-  const ts = parseInt((await getSetting(env, kT)) || "0", 10);
-  let commit = await getSetting(env, kC);
-  let listJson = await getSetting(env, kL);
-  if (commit && listJson && nowSec() - ts < 300) return { commit, list: JSON.parse(listJson) };
-
+// thingino pinned commit + defconfig list, per branch, cached in D1 settings for this long.
+// Nothing warms it ahead of time: the first request to find a branch stale refreshes it.
+const THINGINO_TTL = 300;
+const thinginoKeys = (ref) => [`thingino_commit_${ref}`, `defconfigs_${ref}`, `thingino_ts_${ref}`];
+// Refresh one branch's cache from GitHub. The caller passes the timestamp row it read, and the
+// refresh claims the slot by swapping that row for now: a burst of polls that all find the
+// cache stale makes one GitHub call between them, and a GitHub outage is retried once per TTL
+// rather than on every request, while the last-good commit and list keep serving. With no list
+// cached there is nothing to serve, so then every caller tries. listJson === undefined means
+// the caller didn't read the list; it is then refetched only when the commit moved.
+async function refreshThingino(env, ref, tsRaw, commit, listJson) {
+  const [kC, kL, kT] = thinginoKeys(ref);
   const repo = env.THINGINO_REPO || "themactep/thingino-firmware";
   try {
-    const cr = await ghFetch(env, `https://api.github.com/repos/${repo}/commits/${ref}`);
-    if (cr.ok) {
-      const newCommit = (await cr.json()).sha;
-      if (newCommit && newCommit !== commit) {
-        const list = await fetchDefconfigs(env, repo, newCommit);
-        if (list.length) {
-          listJson = JSON.stringify(list);
-          await setSetting(env, kL, listJson);
-        }
-        commit = newCommit;
-        await setSetting(env, kC, commit);
+    if (listJson !== null) {
+      const claim = await env.DB.prepare(
+        "INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE settings.value IS ?"
+      ).bind(kT, String(nowSec()), tsRaw ?? null).run();
+      if ((claim.meta?.changes ?? 0) !== 1) return { commit, listJson };
+    }
+    // The sha media type answers with the bare 40-char id. The default body is the whole
+    // commit with its file list and patches (351 KB for one ciao commit), all of it parsed
+    // for the one field used here.
+    const cr = await ghFetch(env, `https://api.github.com/repos/${repo}/commits/${ref}`, { headers: { Accept: "application/vnd.github.sha" } });
+    const sha = cr.ok ? (await cr.text()).trim() : "";
+    if (/^[0-9a-f]{40}$/.test(sha) && (sha !== commit || listJson === null)) {
+      const w = [setStmt(env, kC, sha), setStmt(env, kT, String(nowSec()))];
+      const list = await fetchDefconfigs(env, repo, sha);
+      if (list.length) {
+        listJson = JSON.stringify(list);
+        w.push(setStmt(env, kL, listJson));
       }
-      await setSetting(env, kT, String(nowSec()));
+      await env.DB.batch(w);
+      commit = sha;
     }
   } catch (_) { /* keep last-good */ }
+  return { commit, listJson };
+}
+// `rc` lets a caller that already read the branch config pass it in, and `pre` the settings
+// it read along with it, when those hold this ref's three cache rows.
+async function resolveThingino(env, ref, rc, pre) {
+  ref = normRefWith(rc || (await refConfig(env)), ref);
+  const [kC, kL, kT] = thinginoKeys(ref);
+  const s = pre || (await getSettings(env, [kC, kL, kT]));
+  let commit = s[kC] || null, listJson = s[kL] || null;
+  if (!commit || !listJson || nowSec() - parseInt(s[kT] || "0", 10) >= THINGINO_TTL)
+    ({ commit, listJson } = await refreshThingino(env, ref, s[kT], commit, listJson));
   return { commit: commit || null, list: listJson ? JSON.parse(listJson) : [] };
+}
+// The settings a request needs plus the cache rows of the ref it asked for, in one read. Those
+// rows are the right ones whenever the asked ref is enabled, which is every request the page
+// makes; otherwise resolveThingino reads the default's.
+async function settingsWithRef(env, keys, ref) {
+  const asked = validRefName(ref) ? ref : null;
+  const s = await getSettings(env, [...keys, ...(asked ? thinginoKeys(asked) : [])]);
+  const rc = refConfigFrom(s.branches);
+  const r = normRefWith(rc, ref);
+  return { s, rc, ref: r, pre: r === asked ? s : null };
 }
 async function fetchDir(env, repo, commit, subdir) {
   const r = await ghFetch(env, `https://api.github.com/repos/${repo}/contents/configs/${subdir}?ref=${commit}`);
@@ -349,22 +378,31 @@ function noticeFrom(raw) {
 
 // ---- API handlers ---------------------------------------------------------
 async function handleDefconfigs(env, ref) {
-  const { list } = await resolveThingino(env, ref);
+  const q = await settingsWithRef(env, ["branches"], ref);
+  const { list } = await resolveThingino(env, q.ref, q.rc, q.pre);
   return json(list, 200, env);
 }
 const AVG_DONE_SQL = "SELECT avg(finished_ts - dispatched_ts) FROM builds WHERE (outcome='done' OR (outcome IS NULL AND state='done')) AND finished_ts IS NOT NULL AND dispatched_ts IS NOT NULL";
 // Every page poll lands here, so it is one D1 round trip. The tick clock's timestamp rides
-// along for the fallback clock, which then needs no read of its own.
+// along for the fallback clock, which then needs no read of its own, and so does every
+// branch's cache timestamp and commit (two short rows each), because which branch this poll
+// resolves to is only known once the branch config in the same read is parsed.
 async function handleStats(request, env, ctx, ref, my) {
   const uid = resolveUid(request);
   const [sr, cr, mr] = await env.DB.batch([
-    settingsStmt(env, ["branches", "limits", "notice", "builds_enabled", "tick_last_ok"]),
+    env.DB.prepare("SELECT key,value FROM settings WHERE key IN ('branches','limits','notice','builds_enabled','tick_last_ok') OR key GLOB 'thingino_commit_*' OR key GLOB 'thingino_ts_*'"),
     env.DB.prepare(`SELECT (SELECT count(*) FROM builds WHERE state='running') running, (SELECT count(*) FROM builds WHERE state='queued') queued, (${AVG_DONE_SQL}) avg`),
     ...(validBuildId(my) ? [statusStmt(env, my)] : []),
   ]);
   const s = settingsMap(sr), c = (cr.results || [])[0] || {};
   const rc = refConfigFrom(s.branches), cfg = limitsFrom(env, s.limits);
-  const { commit } = await resolveThingino(env, ref, rc);
+  const r = normRefWith(rc, ref);
+  const [kC, , kT] = thinginoKeys(r);
+  let commit = s[kC] || null;
+  // A stale cache answers now and refreshes after the response, so no poll waits on GitHub;
+  // the next poll carries the new commit. Only a branch never fetched at all waits here.
+  if (!commit) ({ commit } = await refreshThingino(env, r, s[kT], null, null));
+  else if (nowSec() - parseInt(s[kT] || "0", 10) >= THINGINO_TTL) ctx.waitUntil(refreshThingino(env, r, s[kT], commit, undefined));
   ctx.waitUntil(maybeTick(env, s.tick_last_ok ?? null));
   // The expiry is admin bookkeeping, so the public payload carries only what it renders.
   const notice = noticeFrom(s.notice);
@@ -400,10 +438,8 @@ async function handleBuild(request, env) {
   let body;
   try { body = await request.json(); } catch { return json({ error: "bad request" }, 400, env); }
   const defconfig = typeof body.defconfig === "string" ? body.defconfig.trim() : "";
-  const s = await getSettings(env, ["branches", "limits", "limits_reset_ts", "builds_enabled"]);
-  const rc = refConfigFrom(s.branches);
-  const ref = normRefWith(rc, body.ref);
-  const { commit, list } = await resolveThingino(env, ref, rc);
+  const { s, rc, ref, pre } = await settingsWithRef(env, ["branches", "limits", "limits_reset_ts", "builds_enabled"], body.ref);
+  const { commit, list } = await resolveThingino(env, ref, rc, pre);
   if (!list.includes(defconfig)) return json({ error: "unknown defconfig" }, 400, env);
 
   const uid = resolveUid(request);
@@ -695,10 +731,7 @@ async function schedulerStep(env, source) {
   if (lock > ts) return;
   await setSetting(env, "cron_lock", String(ts + 50));
   try {
-    // A fetch-driven tick skips the cache warming: it is an optimisation for the request
-    // path, and the request that triggered this tick has just resolved its own ref anyway.
-    // Reconciling, dispatching and reaping are the parts that must not stop.
-    await schedulerWork(env, ts, source !== "fetch");
+    await schedulerWork(env, ts);
     await noteTick(env, ts, source || "cron");
   } catch (e) {
     // Surface recurring failures instead of letting waitUntil swallow them silently.
@@ -708,21 +741,8 @@ async function schedulerStep(env, source) {
     try { await setSetting(env, "cron_lock", "0"); } catch (_) {}
   }
 }
-async function schedulerWork(env, ts, warm) {
+async function schedulerWork(env, ts) {
   const cfg = await limits(env);
-  // Warm the per-branch commit + defconfig caches so visitors rarely pay the GitHub
-  // round-trip inline. This used to warm every branch, which was safe while there were
-  // exactly three of them; the list is admin-editable now, so it warms the default (where
-  // most visitors land) plus one other per tick, rotated by the clock so no cursor has to
-  // be stored. A ref left cold just means the next request for it refreshes it itself,
-  // which is already what happens whenever its 5 min TTL lapses.
-  if (warm) {
-    const rc = await refConfig(env);
-    const others = rc.enabled.filter((r) => r !== rc.default);
-    for (const r of [rc.default, ...(others.length ? [others[Math.floor(ts / 60) % others.length]] : [])])
-      await resolveThingino(env, r, rc);
-  }
-
   const running = ((await env.DB.prepare("SELECT id,run_id,dispatched_ts,cancel_requested FROM builds WHERE state='running'").all()).results) || [];
   const slots = Math.max(0, cfg.maxConcurrent - running.length);
   const queued = slots > 0
