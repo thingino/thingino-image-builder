@@ -582,11 +582,12 @@ async function doCancel(env, b, id, uid) {
     await env.DB.prepare("UPDATE builds SET cancel_requested=1 WHERE id=?").bind(id).run();
     let note = "cancel queued (run not yet listed)";
     try {
-      const runs = await fetchRuns(env);
-      const m = runs.find((r) => (b.run_id && r.run_id === b.run_id) || r.name.includes(id));
-      if (m) {
-        await cancelRun(env, m.run_id);
-        await env.DB.prepare("UPDATE builds SET run_id=? WHERE id=?").bind(m.run_id, id).run();
+      // A run already matched is cancelled by its id; only one not matched yet needs the
+      // list, and then only the runs created since this build was dispatched.
+      const runId = b.run_id || ((await fetchRuns(env, b.dispatched_ts)).find((r) => r.name.includes(id)) || {}).run_id;
+      if (runId) {
+        await cancelRun(env, runId);
+        if (!b.run_id) await env.DB.prepare("UPDATE builds SET run_id=? WHERE id=?").bind(runId, id).run();
         note = "cancel sent to run";
       }
     } catch (_) { /* cron will retry */ }
@@ -598,7 +599,7 @@ async function doCancel(env, b, id, uid) {
 async function handleCancel(id, request, env) {
   if (!validBuildId(id)) return json({ error: "bad build_id" }, 400, env);
   const uid = resolveUid(request);
-  const b = await env.DB.prepare("SELECT uid,state,run_id FROM builds WHERE id=?").bind(id).first();
+  const b = await env.DB.prepare("SELECT uid,state,run_id,dispatched_ts FROM builds WHERE id=?").bind(id).first();
   if (!b) return json({ error: "unknown build" }, 404, env);
   if (b.uid !== uid) return json({ error: "not your build" }, 403, env);
   return json({ state: await doCancel(env, b, id, uid) }, 200, env);
@@ -606,7 +607,7 @@ async function handleCancel(id, request, env) {
 async function handleAdminCancel(id, request, env) {
   if (!(await sessionAdmin(request, env))) return json({ error: "admin auth required" }, 401, env);
   if (!validBuildId(id)) return json({ error: "bad build_id" }, 400, env);
-  const b = await env.DB.prepare("SELECT uid,state,run_id FROM builds WHERE id=?").bind(id).first();
+  const b = await env.DB.prepare("SELECT uid,state,run_id,dispatched_ts FROM builds WHERE id=?").bind(id).first();
   if (!b) return json({ error: "unknown build" }, 404, env);
   await logEvent(env, "admin_cancel", id, b.uid, null, `admin cancelled (was ${b.state})`);
   return json({ state: await doCancel(env, b, id, b.uid) }, 200, env);
@@ -646,29 +647,30 @@ async function dispatchBuild(env, id, defconfig, commit, ref) {
   });
   if (!r.ok) throw new Error(`dispatch ${r.status}`);
 }
-// Newest 50 dispatch runs. Failed runs linger here for FAILED_RETENTION_SECS, so the
-// list can in principle overflow, but do NOT raise this to 100: each run object is ~13 KB
-// of JSON we mostly discard, and a full page is ~1.3 MB to parse against the free plan's
-// 10 ms CPU per invocation (cron included). Overflowing 50 force-fails one build at its
-// timeout; overflowing the CPU budget kills the whole tick, and reaping is what drains
-// the pile, so that would not recover. Overflow needs ~34 failures inside one 8h window.
-async function fetchRuns(env) {
-  const r = await ghFetch(env, `https://api.github.com/repos/${env.GITHUB_REPO}/actions/runs?per_page=50&event=repository_dispatch`);
+// Dispatch runs created since `since` (unix seconds; 10 min of slack for clock skew), newest
+// 50. Nothing created before the oldest running build was dispatched can be one of its runs,
+// and the filter keeps everything else out of a body we parse whole: each run object is
+// ~13 KB of JSON we mostly discard, and a full page of 50 is ~650 KB against the free plan's
+// 10 ms CPU per invocation (cron included). Do NOT raise per_page for the same reason.
+// Overflowing 50 force-fails one build at its timeout; overflowing the CPU budget kills the
+// whole tick, and reaping is what drains the pile, so that would not recover.
+async function fetchRuns(env, since) {
+  const created = since ? `&created=${encodeURIComponent(">=" + new Date((since - 600) * 1000).toISOString().replace(/\.\d+Z$/, "Z"))}` : "";
+  const r = await ghFetch(env, `https://api.github.com/repos/${env.GITHUB_REPO}/actions/runs?per_page=50&event=repository_dispatch${created}`);
   if (!r.ok) return [];
   return ((await r.json()).workflow_runs || []).map((x) => ({
     run_id: x.id, name: x.name || x.display_title || "", status: x.status || "", conclusion: x.conclusion || null,
   }));
 }
-// Does the rolling release already carry this build's image? Asked only on the timeout
-// path, where the alternative is calling a build failed on the strength of a clock. A
-// published .bin means CI finished the job whatever our bookkeeping says, so this is the
-// more authoritative answer, and it costs one request.
-async function releaseHasAsset(env, id) {
+// The rolling release's assets, [] when there is no release (so nothing to delete), or null
+// when GitHub couldn't say.
+async function releaseAssets(env) {
   try {
     const r = await ghFetch(env, `https://api.github.com/repos/${env.GITHUB_REPO}/releases/tags/${env.ROLLING_TAG || "web-builds"}`);
-    if (!r.ok) return false;
-    return ((await r.json()).assets || []).some((a) => a.name === `${id}.bin`);
-  } catch { return false; }
+    if (r.status === 404) return [];
+    if (!r.ok) return null;
+    return (await r.json()).assets || [];
+  } catch { return null; }
 }
 const cancelRun = (env, runId) =>
   ghFetch(env, `https://api.github.com/repos/${env.GITHUB_REPO}/actions/runs/${runId}/cancel`, { method: "POST" }).catch(() => {});
@@ -678,22 +680,20 @@ async function deleteRun(env, runId) {
     return r.ok || r.status === 404;
   } catch { return false; }
 }
-async function deleteReleaseAssets(env, id) {
-  try {
-    const r = await ghFetch(env, `https://api.github.com/repos/${env.GITHUB_REPO}/releases/tags/${env.ROLLING_TAG || "web-builds"}`);
-    if (r.status === 404) return true;
-    if (!r.ok) return false;
-    const v = await r.json();
-    const targets = [`${id}.bin`, `${id}.bin.sha256sum`];
-    let ok = true;
-    for (const a of v.assets || []) {
-      if (targets.includes(a.name)) {
-        const d = await ghFetch(env, `https://api.github.com/repos/${env.GITHUB_REPO}/releases/assets/${a.id}`, { method: "DELETE" });
-        if (!(d.ok || d.status === 404)) ok = false;
-      }
-    }
-    return ok;
-  } catch { return false; }
+// `assets` lets a tick reaping several builds look the release up once.
+async function deleteReleaseAssets(env, id, assets) {
+  if (assets === undefined) assets = await releaseAssets(env);
+  if (!assets) return false;
+  const targets = [`${id}.bin`, `${id}.bin.sha256sum`];
+  let ok = true;
+  for (const a of assets) {
+    if (!targets.includes(a.name)) continue;
+    try {
+      const d = await ghFetch(env, `https://api.github.com/repos/${env.GITHUB_REPO}/releases/assets/${a.id}`, { method: "DELETE" });
+      if (!(d.ok || d.status === 404)) ok = false;
+    } catch { ok = false; }
+  }
+  return ok;
 }
 
 // How long a tick may be missing before request traffic runs one instead. Cron is a
@@ -707,168 +707,200 @@ const TICK_STALE_SECS = 120;
 // trigger still registered, the script untouched for three weeks. Nothing else moves a
 // build along, so finished runs sat in 'running' forever, the queue never drained and the
 // reaper never ran. So the polling endpoints carry a fallback clock: when the last
-// completed tick is older than the window above, the request runs one. The D1 lease below
-// is what keeps a hundred concurrent pollers to a single tick.
+// completed tick is older than the window above, the request runs one.
 // `raw` is the tick_last_ok row when the caller already read it (null = no row); left out, it
 // is read here.
 async function maybeTick(env, raw) {
   try {
     if (raw === undefined) raw = await getSetting(env, "tick_last_ok");
-    if (nowSec() - parseInt(raw || "0", 10) <= TICK_STALE_SECS) return;
-    await schedulerStep(env, "fetch");
+    const t = nowSec();
+    if (t - parseInt(raw || "0", 10) <= TICK_STALE_SECS) return;
+    // Claim the window by moving the clock before ticking: of a hundred pollers that all saw
+    // it stale, the one whose swap lands runs the tick and the rest stop here.
+    const claim = await env.DB.prepare(
+      "INSERT INTO settings(key,value) VALUES('tick_last_ok',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE CAST(settings.value AS INTEGER) <= ?"
+    ).bind(String(t), t - TICK_STALE_SECS).run();
+    if ((claim.meta?.changes ?? 0) === 1) await schedulerStep(env, "fetch");
   } catch (e) {
     console.error("maybeTick failed:", e);
   }
 }
-// Records that a tick actually completed, and logs the changeover when the clock driving
-// them switches. That transition is the only trace a cron outage leaves in the panel, so
-// it is an event; the per-tick timestamp is not (an event a minute would bury the log).
-async function noteTick(env, ts, source) {
-  const prev = await getSetting(env, "tick_source");
-  await setSetting(env, "tick_last_ok", String(ts));
-  if (prev === source) return;
-  await setSetting(env, "tick_source", source);
-  await logEvent(env, source === "fetch" ? "cron_stalled" : "cron_resumed", null, null, null,
-    source === "fetch" ? "no cron tick in the last window; ticking from request traffic" : "cron trigger firing again");
-}
+// One tick. Its first round trip reads everything the tick decides on, and an idle tick (most
+// of them) ends there. Writes are queued and go out as one batch at the end. Nothing holds a
+// lock: every write is guarded on the state it expects (see finishStmts), claims are atomic,
+// and GitHub deletes treat 404 as done, so two ticks that overlap (a cron tick meeting a
+// fallback tick) can at worst repeat a GitHub call.
 async function schedulerStep(env, source) {
   const ts = nowSec();
-  // Advisory D1 lease so overlapping cron ticks don't double-process (best-effort).
-  // The 50s lease auto-expires before the next 1-min tick if a run dies mid-flight.
-  const lock = parseInt((await getSetting(env, "cron_lock")) || "0", 10);
-  if (lock > ts) return;
-  await setSetting(env, "cron_lock", String(ts + 50));
   try {
-    await schedulerWork(env, ts);
-    await noteTick(env, ts, source || "cron");
+    // A cron tick with no build queued or running records itself in that first batch: what
+    // is left (reaping) keeps nobody waiting, so a reap that dies must not set the fallback
+    // clock off. With builds in flight it records itself only once its writes have landed.
+    const [sr, br, mark] = await env.DB.batch([
+      settingsStmt(env, ["limits", "tick_source"]),
+      env.DB.prepare("SELECT id,state,run_id,created_ts,dispatched_ts,finished_ts,cancel_requested,defconfig,commit_sha,ref FROM builds WHERE state IN ('queued','running','done','failed','cancelled')"),
+      ...(source === "cron" ? [env.DB.prepare(
+        "INSERT INTO settings(key,value) SELECT 'tick_last_ok',? WHERE NOT EXISTS (SELECT 1 FROM builds WHERE state IN ('queued','running')) ON CONFLICT(key) DO UPDATE SET value=excluded.value"
+      ).bind(String(ts))] : []),
+    ]);
+    const s = settingsMap(sr);
+    const w = await schedulerWork(env, ts, limitsFrom(env, s.limits), br.results || []);
+    // A fetch tick moved the clock when it claimed its window (maybeTick).
+    if (source === "cron" && !(mark.meta?.changes ?? 0)) w.push(setStmt(env, "tick_last_ok", String(ts)));
+    // The changeover between clocks is the only trace a cron outage leaves in the panel, so
+    // it is an event; the per-tick timestamp is not (an event a minute would bury the log).
+    if (s.tick_source !== source) w.push(
+      setStmt(env, "tick_source", source),
+      eventStmt(env, source === "fetch" ? "cron_stalled" : "cron_resumed", null, null, null,
+        source === "fetch" ? "no cron tick in the last window; ticking from request traffic" : "cron trigger firing again"),
+    );
+    // Housekeeping: the first tick of each hour drops what is past the 7 day window.
+    if (ts % 3600 < 60) w.push(
+      env.DB.prepare("DELETE FROM builds WHERE state='expired' AND finished_ts < ?").bind(ts - 7 * DAY),
+      env.DB.prepare("DELETE FROM events WHERE ts < ?").bind(ts - 7 * DAY),
+    );
+    if (w.length) await env.DB.batch(w);
   } catch (e) {
     // Surface recurring failures instead of letting waitUntil swallow them silently.
     console.error("schedulerStep failed:", e);
     try { await logEvent(env, "cron_error", null, null, null, String((e && e.message) || e)); } catch (_) {}
-  } finally {
-    try { await setSetting(env, "cron_lock", "0"); } catch (_) {}
   }
 }
-async function schedulerWork(env, ts) {
-  const cfg = await limits(env);
-  const running = ((await env.DB.prepare("SELECT id,run_id,dispatched_ts,cancel_requested FROM builds WHERE state='running'").all()).results) || [];
-  const slots = Math.max(0, cfg.maxConcurrent - running.length);
-  const queued = slots > 0
-    ? ((await env.DB.prepare("SELECT id,defconfig,commit_sha,ref FROM builds WHERE state='queued' ORDER BY created_ts ASC LIMIT ?").bind(slots).all()).results) || []
-    : [];
+// A running build's end, as statements for a batch. The event and the done counter are
+// guarded on the row still being 'running' and go BEFORE the update that ends it, so a second
+// tick replaying the same transition changes nothing: no doubled total_done, no duplicate
+// event. runId: undefined leaves run_id alone, null clears it (the run is gone), a number
+// records it.
+function finishStmts(env, ts, id, st, detail, runId) {
+  const live = "EXISTS (SELECT 1 FROM builds WHERE id=? AND state='running')";
+  const w = [env.DB.prepare(`INSERT INTO events(ts,kind,build_id,detail) SELECT ?,?,?,? WHERE ${live}`).bind(ts, st, id, detail, id)];
+  // All-time count of successful builds. Lives in settings, so it survives the reaper,
+  // clear-logs and clear-builds (which only touch builds/events).
+  if (st === "done")
+    w.push(env.DB.prepare(`INSERT INTO settings(key,value) SELECT 'total_done','1' WHERE ${live} ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1`).bind(id));
+  w.push(runId === undefined
+    ? env.DB.prepare("UPDATE builds SET state=?, outcome=?, finished_ts=? WHERE id=? AND state='running'").bind(st, st, ts, id)
+    : env.DB.prepare("UPDATE builds SET state=?, outcome=?, finished_ts=?, run_id=? WHERE id=? AND state='running'").bind(st, st, ts, runId, id));
+  return w;
+}
+// Reconcile, dispatch and reap, from the build rows the tick read. Returns the writes still
+// to send, which the tick sends together with its own bookkeeping.
+async function schedulerWork(env, ts, cfg, rows) {
+  const w = [];
+  const running = rows.filter((b) => b.state === "running");
+  const queued = rows.filter((b) => b.state === "queued").sort((a, b) => a.created_ts - b.created_ts);
+  // The release is looked up once a tick at most, by whichever path needs it first.
+  let rel;
+  const assets = () => (rel ??= releaseAssets(env));
+  let freed = 0;
+  const finish = (...a) => { freed++; w.push(...finishStmts(env, ts, ...a)); };
 
-  const runs = running.length ? await fetchRuns(env) : [];
-
+  const runs = running.length ? await fetchRuns(env, Math.min(...running.map((b) => b.dispatched_ts || ts))) : [];
   for (const b of running) {
     const m = runs.find((r) => (b.run_id && r.run_id === b.run_id) || r.name.includes(b.id));
     if (b.cancel_requested) {
       if (m && m.status === "completed") {
         await deleteRun(env, m.run_id);
-        await env.DB.prepare("UPDATE builds SET state='cancelled', outcome='cancelled', finished_ts=?, run_id=NULL WHERE id=?").bind(ts, b.id).run();
-        await logEvent(env, "cancelled", b.id, null, null, "run stopped + deleted");
+        finish(b.id, "cancelled", "run stopped + deleted", null);
       } else if (m) {
         await cancelRun(env, m.run_id);
         // Backstop: if the run won't stop within the build timeout, force-finish it so
         // it can't pin a concurrency slot indefinitely.
         if (ts - (b.dispatched_ts || ts) > cfg.buildTimeout) {
           await deleteRun(env, m.run_id);
-          await env.DB.prepare("UPDATE builds SET state='cancelled', outcome='cancelled', finished_ts=?, run_id=NULL WHERE id=?").bind(ts, b.id).run();
-          await logEvent(env, "cancelled", b.id, null, null, "force-cancelled at timeout");
+          finish(b.id, "cancelled", "force-cancelled at timeout", null);
         }
       } else if (b.dispatched_ts && ts - b.dispatched_ts > 180) {
         // Give up only after a grace window — otherwise we'd orphan a run that
         // simply hasn't appeared in the runs list yet.
-        await env.DB.prepare("UPDATE builds SET state='cancelled', outcome='cancelled', finished_ts=? WHERE id=?").bind(ts, b.id).run();
-        await logEvent(env, "cancelled", b.id, null, null, "cancelled (run not found after grace)");
+        finish(b.id, "cancelled", "cancelled (run not found after grace)");
       }
       // else: stay 'cancelling' and retry next tick
       continue;
     }
     if (m) {
-      if (!b.run_id) await env.DB.prepare("UPDATE builds SET run_id=? WHERE id=?").bind(m.run_id, b.id).run();
+      if (!b.run_id) w.push(env.DB.prepare("UPDATE builds SET run_id=? WHERE id=?").bind(m.run_id, b.id));
       if (m.status === "completed") {
         const st = m.conclusion === "success" ? "done" : m.conclusion === "cancelled" ? "cancelled" : "failed";
-        // Guard on state='running' so two overlapping cron ticks can't both apply the
-        // transition (which would double-count total_done + duplicate GitHub cleanup).
-        const fin = await env.DB.prepare("UPDATE builds SET state=?, outcome=?, finished_ts=? WHERE id=? AND state='running'").bind(st, st, ts, b.id).run();
-        if ((fin.meta?.changes ?? 0) === 1) {
-          // All-time count of successful builds. Lives in settings, so it survives the
-          // reaper + clear-logs + clear-builds (which only touch builds/events).
-          if (st === "done") await env.DB.prepare("INSERT INTO settings(key,value) VALUES('total_done','1') ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1").run();
-          await logEvent(env, st, b.id, null, null, `run ${m.run_id} ${m.conclusion || "?"}`);
-        }
+        finish(b.id, st, `run ${m.run_id} ${m.conclusion || "?"}`);
       } else if (ts - (b.dispatched_ts || ts) > cfg.buildTimeout) {
         // Run is listed but still in-progress past the timeout — stop it and fail the build.
         await cancelRun(env, m.run_id);
-        await env.DB.prepare("UPDATE builds SET state='failed', outcome='failed', finished_ts=?, run_id=? WHERE id=?").bind(ts, m.run_id, b.id).run();
-        await logEvent(env, "failed", b.id, null, null, `timed out after ${cfg.buildTimeout}s (run cancelled)`);
+        finish(b.id, "failed", `timed out after ${cfg.buildTimeout}s (run cancelled)`, m.run_id);
       }
     } else if (ts - (b.dispatched_ts || ts) > cfg.buildTimeout) {
       // No run under this id and the clock has run out. Before calling it failed, ask the
       // release: when ticks stop for longer than the timeout, a build that succeeded and
       // published its image comes back here looking exactly like one that never ran, and
       // failing it would throw away a finished image the requester is still waiting for.
-      const shipped = await releaseHasAsset(env, b.id);
-      const st = shipped ? "done" : "failed";
-      const fin = await env.DB.prepare("UPDATE builds SET state=?, outcome=?, finished_ts=? WHERE id=? AND state='running'").bind(st, st, ts, b.id).run();
-      if ((fin.meta?.changes ?? 0) === 1) {
-        if (shipped) await env.DB.prepare("INSERT INTO settings(key,value) VALUES('total_done','1') ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1").run();
-        await logEvent(env, st, b.id, null, null, shipped ? "run not listed, but its image is published" : "timed out / run not found");
+      const a = await assets();
+      const shipped = !!a && a.some((x) => x.name === `${b.id}.bin`);
+      finish(b.id, shipped ? "done" : "failed", shipped ? "run not listed, but its image is published" : "timed out / run not found");
+    }
+  }
+
+  // Fill the free slots, the ones this tick just freed included: the transitions above go out
+  // in the same batch as the claims and ahead of them, so the claims see the freed slots.
+  const pick = queued.slice(0, Math.max(0, cfg.maxConcurrent - running.length + freed));
+  if (pick.length) {
+    const res = await env.DB.batch([
+      ...w,
+      ...pick.map((q) => env.DB.prepare("UPDATE builds SET state='running', dispatched_ts=? WHERE id=? AND state='queued' AND (SELECT count(*) FROM builds WHERE state='running') < ?").bind(ts, q.id, cfg.maxConcurrent)),
+    ]);
+    const claims = res.slice(w.length);
+    w.length = 0;
+    for (const [i, q] of pick.entries()) {
+      // Claim-then-act: the claim atomically flipped queued→running, so an inline dispatch (or
+      // another overlapping tick) can't grab the same row. Skip it if we didn't win.
+      if ((claims[i].meta?.changes ?? 0) !== 1) continue;
+      try {
+        await dispatchBuild(env, q.id, q.defconfig, q.commit_sha, q.ref);
+        w.push(eventStmt(env, "dispatched", q.id, null, null, q.defconfig));
+      } catch (_) {
+        // Release the claim back to queued, count the attempt, and fail after 3 tries.
+        w.push(
+          env.DB.prepare(
+            `UPDATE builds SET attempts=attempts+1, dispatched_ts=NULL,
+               state=CASE WHEN attempts+1 >= 3 THEN 'failed' ELSE 'queued' END,
+               outcome=CASE WHEN attempts+1 >= 3 THEN 'failed' ELSE outcome END,
+               finished_ts=CASE WHEN attempts+1 >= 3 THEN ? ELSE finished_ts END
+             WHERE id=? AND state='running'`
+          ).bind(ts, q.id),
+          env.DB.prepare("INSERT INTO events(ts,kind,build_id,detail) SELECT ?,'failed',?,'dispatch failed 3x' WHERE EXISTS (SELECT 1 FROM builds WHERE id=? AND state='failed' AND attempts >= 3)").bind(ts, q.id, q.id),
+        );
       }
     }
   }
 
-  for (const q of queued) {
-    // Claim-then-act: atomically flip queued→running so an inline dispatch (or another
-    // overlapping tick) can't grab the same row. Skip if we didn't win the claim.
-    const claim = await env.DB.prepare("UPDATE builds SET state='running', dispatched_ts=? WHERE id=? AND state='queued' AND (SELECT count(*) FROM builds WHERE state='running') < ?").bind(nowSec(), q.id, cfg.maxConcurrent).run();
-    if ((claim.meta?.changes ?? 0) !== 1) continue;
-    try {
-      await dispatchBuild(env, q.id, q.defconfig, q.commit_sha, q.ref);
-      await logEvent(env, "dispatched", q.id, null, null, q.defconfig);
-    } catch (_) {
-      // Release the claim back to queued, count the attempt, and fail after 3 tries.
-      await env.DB.prepare("UPDATE builds SET state='queued', dispatched_ts=NULL, attempts=attempts+1 WHERE id=?").bind(q.id).run();
-      const at = ((await env.DB.prepare("SELECT attempts FROM builds WHERE id=?").bind(q.id).first()) || { attempts: 0 }).attempts;
-      if (at >= 3) {
-        await env.DB.prepare("UPDATE builds SET state='failed', outcome='failed', finished_ts=? WHERE id=?").bind(nowSec(), q.id).run();
-        await logEvent(env, "failed", q.id, null, null, "dispatch failed 3x");
-      }
-    }
-  }
-
-  const reap = ((await env.DB.prepare("SELECT id,state,run_id,finished_ts FROM builds WHERE state IN ('done','failed','cancelled') AND finished_ts IS NOT NULL ORDER BY finished_ts ASC").all()).results) || [];
-  // Each reap costs up to three GitHub calls (release lookup, asset delete, run delete)
-  // against a 50-subrequest ceiling per invocation, and a backlog builds up whenever ticks
-  // stop for a while. Oldest first, a few per tick: the queue drains over the next few
-  // minutes instead of one tick trying to clear it all and dying halfway through.
-  let budget = 8;
-  for (const b of reap) {
-    if (budget <= 0) break;
-    const age = ts - b.finished_ts;
-    // A failed build holds its Actions run (and so its logs) for the longer window, so an
-    // admin can still open the run from the panel and see what broke. done and cancelled
-    // reap on the short one: a cancelled build's run was already deleted by the cancel path.
-    const expired = age > (b.state === "failed" ? cfg.failedRetention : cfg.retention);
-    if (!expired) continue;
-    budget--;
+  // A failed build holds its Actions run (and so its logs) for the longer window, so an
+  // admin can still open the run from the panel and see what broke. done and cancelled
+  // reap on the short one: a cancelled build's run was already deleted by the cancel path.
+  // Oldest first, a few per tick: each reap costs up to three GitHub calls against a
+  // 50-subrequest ceiling per invocation, and a backlog builds up whenever ticks stop for a
+  // while, so it drains over the next few minutes instead of one tick trying to clear it all
+  // and dying halfway through.
+  const due = rows
+    .filter((b) => ["done", "failed", "cancelled"].includes(b.state) && b.finished_ts != null &&
+      ts - b.finished_ts > (b.state === "failed" ? cfg.failedRetention : cfg.retention))
+    .sort((a, b) => a.finished_ts - b.finished_ts)
+    .slice(0, 8);
+  for (const b of due) {
     // A cancelled build can still have an artifact: the run publishes the image as its
     // last step, and someone who cancels a build the page still shows as running (which
     // is what a stalled tick looks like from outside) cancels a run that already uploaded.
     // Observed on 2026-09-02: cc2e82d5 published at 05:20, was cancelled at 05:47, and its
     // 16 MB .bin outlived every row that referred to it. So cancelled sweeps its assets
-    // too; the lookup 404s harmlessly when there was nothing to publish. Only a failed
-    // build is exempt, its run dies before the upload step.
-    const assetOk = b.state === "failed" ? true : await deleteReleaseAssets(env, b.id);
+    // too; the lookup finds nothing harmlessly when there was nothing to publish. Only a
+    // failed build is exempt, its run dies before the upload step.
+    const assetOk = b.state === "failed" ? true : await deleteReleaseAssets(env, b.id, await assets());
     const runOk = b.run_id ? await deleteRun(env, b.run_id) : true;
-    if (assetOk && runOk) {
-      await env.DB.prepare("UPDATE builds SET state='expired' WHERE id=?").bind(b.id).run();
-      await logEvent(env, "expired", b.id, null, null, `reaped ${b.state}`);
-    }
+    if (assetOk && runOk) w.push(
+      env.DB.prepare("INSERT INTO events(ts,kind,build_id,detail) SELECT ?,'expired',?,? WHERE EXISTS (SELECT 1 FROM builds WHERE id=? AND state=?)")
+        .bind(ts, b.id, `reaped ${b.state}`, b.id, b.state),
+      env.DB.prepare("UPDATE builds SET state='expired' WHERE id=? AND state=?").bind(b.id, b.state),
+    );
   }
-
-  await env.DB.prepare("DELETE FROM builds WHERE state='expired' AND finished_ts < ?").bind(ts - 7 * DAY).run();
-  await env.DB.prepare("DELETE FROM events WHERE ts < ?").bind(ts - 7 * DAY).run();
+  return w;
 }
 
 // ---- admin (TOTP 2FA + sessions in D1) ------------------------------------
@@ -1344,9 +1376,10 @@ async function handleAdminClearBuilds(request, env) {
   // Reap GitHub artifacts/runs for done/failed rows before deleting them (cancelled/expired
   // already had theirs removed by cancel or the reaper). Best-effort.
   const reap = ((await env.DB.prepare("SELECT id,run_id,state FROM builds WHERE state IN ('done','failed')").all()).results) || [];
+  const assets = reap.some((b) => b.state === "done") ? await releaseAssets(env) : [];
   for (const b of reap) {
     try {
-      if (b.state === "done") await deleteReleaseAssets(env, b.id);
+      if (b.state === "done") await deleteReleaseAssets(env, b.id, assets);
       if (b.run_id) await deleteRun(env, b.run_id);
     } catch (_) { /* best-effort */ }
   }
