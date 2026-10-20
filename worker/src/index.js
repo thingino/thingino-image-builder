@@ -23,7 +23,8 @@ const uuid = () => crypto.randomUUID();
 const validUid = (s) => typeof s === "string" && /^[a-zA-Z0-9-]{8,64}$/.test(s);
 const validBuildId = (s) => typeof s === "string" && /^[a-f0-9-]{8,40}$/.test(s);
 
-async function limits(env) {
+// `ov` is the raw "limits" settings row, so callers that already read it pay nothing more.
+function limitsFrom(env, ov) {
   const n = (k, d) => parseInt(env[k] || "", 10) || d;
   const base = {
     userHourly: n("PER_USER_HOURLY_LIMIT", 2),
@@ -36,10 +37,10 @@ async function limits(env) {
     buildTimeout: n("BUILD_TIMEOUT_SECS", 5400),
   };
   // Runtime overrides set from the admin UI (D1 settings), layered over the vars.
-  const ov = await getSetting(env, "limits");
   if (ov) { try { Object.assign(base, JSON.parse(ov)); } catch (_) {} }
   return base;
 }
+const limits = async (env) => limitsFrom(env, await getSetting(env, "limits"));
 
 const assetUrl = (env, id) =>
   `https://github.com/${env.GITHUB_REPO}/releases/download/${env.ROLLING_TAG || "web-builds"}/${id}.bin`;
@@ -106,18 +107,30 @@ function softGuard(ip, max, period) {
 }
 
 // ---- D1 helpers -----------------------------------------------------------
+// Every D1 call costs this Worker about 0.5 ms of CPU on top of the wait (measured on the live
+// runtime in October 2026: 18 sequential reads = 9 ms), and the free plan allows 10 ms per
+// invocation, cron included. So the paths that run all the time read what they need in one
+// round trip and send their writes as one batch. A call per value is what pushed the cron
+// tick over the limit.
 const countQ = async (env, sql, ...args) =>
   ((await env.DB.prepare(sql).bind(...args).first()) || { c: 0 }).c;
+const settingsStmt = (env, keys) =>
+  env.DB.prepare(`SELECT key,value FROM settings WHERE key IN (${keys.map(() => "?").join(",")})`).bind(...keys);
+// A settings query's rows as {key: value}; a key with no row is simply absent.
+const settingsMap = (res) => Object.fromEntries(((res && res.results) || []).map((r) => [r.key, r.value]));
+const getSettings = async (env, keys) => settingsMap(await settingsStmt(env, keys).all());
 const getSetting = async (env, key) => {
   const r = await env.DB.prepare("SELECT value FROM settings WHERE key=?").bind(key).first();
   return r ? r.value : null;
 };
-const setSetting = (env, key, value) =>
+const setStmt = (env, key, value) =>
   env.DB.prepare("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
-    .bind(key, value).run();
-const logEvent = (env, kind, build_id, uid, ip, detail, ipFull, country, app) =>
+    .bind(key, value);
+const setSetting = (env, key, value) => setStmt(env, key, value).run();
+const eventStmt = (env, kind, build_id, uid, ip, detail, ipFull, country, app) =>
   env.DB.prepare("INSERT INTO events(ts,kind,build_id,uid,ip_bucket,ip_full,detail,country,app) VALUES(?,?,?,?,?,?,?,?,?)")
-    .bind(nowSec(), kind, build_id || null, uid || null, ip || null, ipFull || null, detail || "", country || null, app || null).run();
+    .bind(nowSec(), kind, build_id || null, uid || null, ip || null, ipFull || null, detail || "", country || null, app || null);
+const logEvent = (...a) => eventStmt(...a).run();
 
 // Which app a person logged in through, recorded on admin_login_* rows so an audit trail can be
 // scoped to one of them. Read this before using it anywhere else: it is asserted by the caller,
@@ -217,8 +230,7 @@ const validRefName = (s) =>
   typeof s === "string" && s.length > 0 && s.length <= 100 &&
   /^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(s) &&
   !/\.\.|@\{|\/\/|[./]$|\.lock(\/|$)/.test(s);
-async function refConfig(env) {
-  const raw = await getSetting(env, "branches");
+function refConfigFrom(raw) {
   if (raw) {
     try {
       const c = JSON.parse(raw);
@@ -231,6 +243,7 @@ async function refConfig(env) {
   }
   return { enabled: [...REF_FALLBACK], default: REF_FALLBACK[0] };
 }
+const refConfig = async (env) => refConfigFrom(await getSetting(env, "branches"));
 const normRefWith = (rc, ref) => (rc.enabled.includes(ref) ? ref : rc.default);
 
 // thingino pinned commit + defconfig list, per branch, cached in D1 settings (~5 min).
@@ -325,8 +338,7 @@ const cleanNotice = (s) =>
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 500);
-async function getNotice(env) {
-  const raw = await getSetting(env, "notice");
+function noticeFrom(raw) {
   if (!raw) return null;
   let n;
   try { n = JSON.parse(raw); } catch { return null; }
@@ -340,23 +352,30 @@ async function handleDefconfigs(env, ref) {
   const { list } = await resolveThingino(env, ref);
   return json(list, 200, env);
 }
-async function handleStats(request, env, ref, my) {
+const AVG_DONE_SQL = "SELECT avg(finished_ts - dispatched_ts) FROM builds WHERE (outcome='done' OR (outcome IS NULL AND state='done')) AND finished_ts IS NOT NULL AND dispatched_ts IS NOT NULL";
+// Every page poll lands here, so it is one D1 round trip. The tick clock's timestamp rides
+// along for the fallback clock, which then needs no read of its own.
+async function handleStats(request, env, ctx, ref, my) {
   const uid = resolveUid(request);
-  // Read once, use twice: resolving the caller's ref and reporting the list to the page.
-  const rc = await refConfig(env);
+  const [sr, cr, mr] = await env.DB.batch([
+    settingsStmt(env, ["branches", "limits", "notice", "builds_enabled", "tick_last_ok"]),
+    env.DB.prepare(`SELECT (SELECT count(*) FROM builds WHERE state='running') running, (SELECT count(*) FROM builds WHERE state='queued') queued, (${AVG_DONE_SQL}) avg`),
+    ...(validBuildId(my) ? [statusStmt(env, my)] : []),
+  ]);
+  const s = settingsMap(sr), c = (cr.results || [])[0] || {};
+  const rc = refConfigFrom(s.branches), cfg = limitsFrom(env, s.limits);
   const { commit } = await resolveThingino(env, ref, rc);
-  const cfg = await limits(env);
-  const avg = await env.DB.prepare("SELECT avg(finished_ts - dispatched_ts) a FROM builds WHERE (outcome='done' OR (outcome IS NULL AND state='done')) AND finished_ts IS NOT NULL AND dispatched_ts IS NOT NULL").first();
+  ctx.waitUntil(maybeTick(env, s.tick_last_ok ?? null));
   // The expiry is admin bookkeeping, so the public payload carries only what it renders.
-  const notice = await getNotice(env);
+  const notice = noticeFrom(s.notice);
   return json({
-    running: await countQ(env, "SELECT count(*) c FROM builds WHERE state='running'"),
-    queued: await countQ(env, "SELECT count(*) c FROM builds WHERE state='queued'"),
+    running: c.running || 0,
+    queued: c.queued || 0,
     max_concurrent: cfg.maxConcurrent,
     user_hourly: cfg.userHourly,
     retention_secs: cfg.retention,
-    avg_build_secs: avg && avg.a ? Math.round(avg.a) : null,
-    builds_enabled: (await getSetting(env, "builds_enabled")) !== "0",
+    avg_build_secs: c.avg ? Math.round(c.avg) : null,
+    builds_enabled: s.builds_enabled !== "0",
     notice: notice ? { text: notice.text, level: notice.level } : null,
     commit,
     // The branches the page may offer, and which one a visitor who has never chosen gets.
@@ -368,7 +387,7 @@ async function handleStats(request, env, ref, my) {
     uid,
     // Embedded status of the caller's tracked build (?my=<id>), so the page needs one
     // request per poll instead of stats + status. null = unknown/expired-and-purged.
-    ...(my ? { my_build: await statusPayload(env, my) } : {}),
+    ...(my ? { my_build: mr ? statusFrom(env, my, (mr.results || [])[0]) : null } : {}),
   }, 200, env);
 }
 async function handleBuild(request, env) {
@@ -381,107 +400,119 @@ async function handleBuild(request, env) {
   let body;
   try { body = await request.json(); } catch { return json({ error: "bad request" }, 400, env); }
   const defconfig = typeof body.defconfig === "string" ? body.defconfig.trim() : "";
-  const rc = await refConfig(env);
+  const s = await getSettings(env, ["branches", "limits", "limits_reset_ts", "builds_enabled"]);
+  const rc = refConfigFrom(s.branches);
   const ref = normRefWith(rc, body.ref);
   const { commit, list } = await resolveThingino(env, ref, rc);
   if (!list.includes(defconfig)) return json({ error: "unknown defconfig" }, 400, env);
 
   const uid = resolveUid(request);
-  const ts = nowSec(), cfg = await limits(env);
+  const ts = nowSec(), cfg = limitsFrom(env, s.limits);
   // Hourly window, but never count builds from before an admin "reset limits".
-  const resetTs = parseInt((await getSetting(env, "limits_reset_ts")) || "0", 10);
-  const cutoff = Math.max(ts - WINDOW, resetTs);
+  const cutoff = Math.max(ts - WINDOW, parseInt(s.limits_reset_ts || "0", 10));
 
-  if ((await getSetting(env, "builds_enabled")) === "0")
+  if (s.builds_enabled === "0")
     return json({ error: "builds are temporarily disabled during maintenance, check back later" }, 503, env);
 
-  // Dedup: identical (defconfig, commit) in flight or done within retention.
-  if (commit) {
-    const e = await env.DB.prepare(
+  // Dedup: identical (defconfig, commit) in flight or done within retention. Read with the
+  // queue length, which the check after it needs anyway.
+  const [qr, dr] = await env.DB.batch([
+    env.DB.prepare("SELECT count(*) c FROM builds WHERE state='queued'"),
+    ...(commit ? [env.DB.prepare(
       `SELECT id,state,cancel_requested FROM builds
        WHERE defconfig=? AND commit_sha=?
          AND (state IN ('queued','running') OR (state='done' AND finished_ts > ?))
          AND NOT (state='running' AND cancel_requested=1)
        ORDER BY created_ts DESC LIMIT 1`
-    ).bind(defconfig, commit, ts - cfg.retention).first();
-    if (e) {
-      await logEvent(env, "dedup", e.id, uid, ip, `reused ${e.state} for ${defconfig}`, rawIp, reqCountry(request));
-      const st = e.state === "running" && e.cancel_requested ? "cancelling" : e.state;
-      return json({
-        build_id: e.id, defconfig, state: st, deduped: true,
-        download_url: st === "done" ? assetUrl(env, e.id) : null,
-        status_url: `/api/status/${e.id}`, commit,
-      }, 200, env);
-    }
+    ).bind(defconfig, commit, ts - cfg.retention)] : []),
+  ]);
+  const e = dr && (dr.results || [])[0];
+  if (e) {
+    await logEvent(env, "dedup", e.id, uid, ip, `reused ${e.state} for ${defconfig}`, rawIp, reqCountry(request));
+    const st = e.state === "running" && e.cancel_requested ? "cancelling" : e.state;
+    return json({
+      build_id: e.id, defconfig, state: st, deduped: true,
+      download_url: st === "done" ? assetUrl(env, e.id) : null,
+      status_url: `/api/status/${e.id}`, commit,
+    }, 200, env);
   }
 
-  if ((await countQ(env, "SELECT count(*) c FROM builds WHERE state='queued'")) >= cfg.maxQueue)
+  if ((((qr.results || [])[0] || {}).c || 0) >= cfg.maxQueue)
     return json({ error: "the build queue is full, try again shortly" }, 503, env);
 
   const notCancelledUndispatched = "NOT (state='cancelled' AND dispatched_ts IS NULL)";
   // Atomic rate-limit + insert: the global/user/IP caps are guard subqueries on the
-  // INSERT, so a concurrent burst can't slip past separate check-then-insert reads.
+  // INSERT, so a concurrent burst can't slip past separate check-then-insert reads. Its
+  // event, the inline-dispatch claim and the queue length ride in the same batch: the event
+  // and the claim only find a row if the capped insert made one.
+  //
+  // Inline dispatch: if a slot is free, fire the build NOW rather than waiting for the next
+  // cron tick. Claim-then-act: the claim atomically flips queued→running so the cron can't
+  // grab the same row mid-dispatch, and only a claim that won dispatches.
   const id = uuid();
-  const ins = await env.DB.prepare(
-    `INSERT INTO builds(id,uid,ip_bucket,ip_full,defconfig,state,created_ts,commit_sha,ref,country)
-     SELECT ?,?,?,?,?,'queued',?,?,?,?
-     WHERE (SELECT count(*) FROM builds WHERE created_ts > ? AND ${notCancelledUndispatched}) < ?
-       AND (SELECT count(*) FROM builds WHERE uid=? AND created_ts > ? AND ${notCancelledUndispatched}) < ?
-       AND (SELECT count(*) FROM builds WHERE ip_bucket=? AND created_ts > ? AND ${notCancelledUndispatched}) < ?`
-  ).bind(
-    id, uid, ip, rawIp, defconfig, ts, commit, ref, reqCountry(request),
-    cutoff, cfg.globalHourly,
-    uid, cutoff, cfg.userHourly,
-    ip, cutoff, cfg.ipHourly,
-  ).run();
+  const [ins, , claim, qr2] = await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO builds(id,uid,ip_bucket,ip_full,defconfig,state,created_ts,commit_sha,ref,country)
+       SELECT ?,?,?,?,?,'queued',?,?,?,?
+       WHERE (SELECT count(*) FROM builds WHERE created_ts > ? AND ${notCancelledUndispatched}) < ?
+         AND (SELECT count(*) FROM builds WHERE uid=? AND created_ts > ? AND ${notCancelledUndispatched}) < ?
+         AND (SELECT count(*) FROM builds WHERE ip_bucket=? AND created_ts > ? AND ${notCancelledUndispatched}) < ?`
+    ).bind(
+      id, uid, ip, rawIp, defconfig, ts, commit, ref, reqCountry(request),
+      cutoff, cfg.globalHourly,
+      uid, cutoff, cfg.userHourly,
+      ip, cutoff, cfg.ipHourly,
+    ),
+    env.DB.prepare("INSERT INTO events(ts,kind,build_id,uid,ip_bucket,ip_full,detail,country) SELECT ?,'queued',?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM builds WHERE id=?)")
+      .bind(ts, id, uid, ip, rawIp || null, defconfig, reqCountry(request), id),
+    env.DB.prepare("UPDATE builds SET state='running', dispatched_ts=? WHERE id=? AND state='queued' AND (SELECT count(*) FROM builds WHERE state='running') < ?").bind(ts, id, cfg.maxConcurrent),
+    env.DB.prepare("SELECT count(*) c FROM builds WHERE state='queued'"),
+  ]);
   if ((ins.meta?.changes ?? 0) === 0) {
     // Capped — re-run the cheap individual counts to pick which 429 message applies.
     // No durable event per rejection: that INSERT is a one-way amplified write a
     // flood can use to exhaust the D1 write budget (audit H2). The flood guard +
     // the 429 are the signal; the re-check reads below only pick the message.
-    if ((await countQ(env, `SELECT count(*) c FROM builds WHERE created_ts > ? AND ${notCancelledUndispatched}`, cutoff)) >= cfg.globalHourly)
+    const c = (await env.DB.prepare(
+      `SELECT (SELECT count(*) FROM builds WHERE created_ts > ? AND ${notCancelledUndispatched}) g,
+              (SELECT count(*) FROM builds WHERE uid=? AND created_ts > ? AND ${notCancelledUndispatched}) u`
+    ).bind(cutoff, uid, cutoff).first()) || {};
+    if (c.g >= cfg.globalHourly)
       return json({ error: `the builder is at its hourly limit (${cfg.globalHourly}/hr) — try again later` }, 429, env);
-    if ((await countQ(env, `SELECT count(*) c FROM builds WHERE uid=? AND created_ts > ? AND ${notCancelledUndispatched}`, uid, cutoff)) >= cfg.userHourly)
+    if (c.u >= cfg.userHourly)
       return json({ error: `you've reached ${cfg.userHourly} builds this hour — try again later` }, 429, env);
     return json({ error: "too many builds from your network this hour — try again later" }, 429, env);
   }
-  await logEvent(env, "queued", id, uid, ip, defconfig, rawIp, reqCountry(request));
 
-  // Inline dispatch: if a slot is free, fire the build NOW rather than waiting for
-  // the next cron tick. The cron is only a fallback/reconciler for the rest.
-  let state = "queued", position = 0;
-  if ((await countQ(env, "SELECT count(*) c FROM builds WHERE state='running'")) < cfg.maxConcurrent) {
-    // Claim-then-act: atomically flip queued→running so the cron can't grab the same
-    // row mid-dispatch. Only dispatch if we won the claim.
-    const claim = await env.DB.prepare("UPDATE builds SET state='running', dispatched_ts=? WHERE id=? AND state='queued' AND (SELECT count(*) FROM builds WHERE state='running') < ?").bind(nowSec(), id, cfg.maxConcurrent).run();
-    if ((claim.meta?.changes ?? 0) === 1) {
-      try {
-        await dispatchBuild(env, id, defconfig, commit, ref);
-        await logEvent(env, "dispatched", id, uid, ip, defconfig);
-        state = "running";
-      } catch (_) {
-        // dispatch failed — release the claim so the cron retries it.
-        await env.DB.prepare("UPDATE builds SET state='queued', dispatched_ts=NULL WHERE id=?").bind(id).run();
-      }
+  let state = "queued", position = ((qr2.results || [])[0] || {}).c || 0;
+  if ((claim.meta?.changes ?? 0) === 1) {
+    try {
+      await dispatchBuild(env, id, defconfig, commit, ref);
+      await logEvent(env, "dispatched", id, uid, ip, defconfig);
+      state = "running";
+      position = 0;
+    } catch (_) {
+      // dispatch failed — release the claim so the cron retries it.
+      await env.DB.prepare("UPDATE builds SET state='queued', dispatched_ts=NULL WHERE id=?").bind(id).run();
+      position = await countQ(env, "SELECT count(*) c FROM builds WHERE state='queued'");
     }
   }
-  if (state === "queued") position = await countQ(env, "SELECT count(*) c FROM builds WHERE state='queued'");
   return json({ build_id: id, defconfig, state, position, status_url: `/api/status/${id}`, download_url: assetUrl(env, id), commit }, 202, env);
 }
 // One build's public status object, shared by /api/status and /api/stats?my= (the
 // page piggybacks its own build's status on the stats poll: one request, not two).
-// Returns null for an invalid or unknown id.
-async function statusPayload(env, id) {
-  if (!validBuildId(id)) return null;
-  const b = await env.DB.prepare(
-    "SELECT defconfig,state,created_ts,dispatched_ts,finished_ts,cancel_requested FROM builds WHERE id=?"
-  ).bind(id).first();
+// The queue position comes back in the same row, so a status costs one statement.
+const statusStmt = (env, id) => env.DB.prepare(
+  `SELECT defconfig,state,created_ts,dispatched_ts,finished_ts,cancel_requested,
+     CASE WHEN state='queued' THEN (SELECT count(*) FROM builds q WHERE q.state='queued' AND q.created_ts <= b.created_ts) ELSE 0 END position
+   FROM builds b WHERE id=?`
+).bind(id);
+// Returns null for an unknown id (no row).
+function statusFrom(env, id, b) {
   if (!b) return null;
   const ts = nowSec();
   const state = b.state === "running" && b.cancel_requested ? "cancelling" : b.state;
-  let position = 0;
-  if (state === "queued")
-    position = await countQ(env, "SELECT count(*) c FROM builds WHERE state='queued' AND created_ts <= ?", b.created_ts);
+  const position = state === "queued" ? b.position : 0;
   let elapsed = 0;
   if (state === "running" || state === "cancelling") elapsed = b.dispatched_ts ? ts - b.dispatched_ts : 0;
   else if (state === "queued") elapsed = ts - b.created_ts;
@@ -491,7 +522,7 @@ async function statusPayload(env, id) {
 }
 async function handleStatus(id, env) {
   if (!validBuildId(id)) return json({ error: "bad build_id" }, 400, env);
-  const p = await statusPayload(env, id);
+  const p = statusFrom(env, id, await statusStmt(env, id).first());
   if (!p) return json({ error: "unknown build" }, 404, env);
   return json(p, 200, env);
 }
@@ -634,10 +665,12 @@ const TICK_STALE_SECS = 120;
 // reaper never ran. So the polling endpoints carry a fallback clock: when the last
 // completed tick is older than the window above, the request runs one. The D1 lease below
 // is what keeps a hundred concurrent pollers to a single tick.
-async function maybeTick(env) {
+// `raw` is the tick_last_ok row when the caller already read it (null = no row); left out, it
+// is read here.
+async function maybeTick(env, raw) {
   try {
-    const last = parseInt((await getSetting(env, "tick_last_ok")) || "0", 10);
-    if (nowSec() - last <= TICK_STALE_SECS) return;
+    if (raw === undefined) raw = await getSetting(env, "tick_last_ok");
+    if (nowSec() - parseInt(raw || "0", 10) <= TICK_STALE_SECS) return;
     await schedulerStep(env, "fetch");
   } catch (e) {
     console.error("maybeTick failed:", e);
@@ -957,17 +990,18 @@ async function sessionAdmin(request, env) {
   if (!tok) return null;
   const th = await tokenHash(tok);
   const t = nowSec();
-  await env.DB.prepare("DELETE FROM sessions WHERE expires <= ? OR last_active <= ?").bind(t, t - SESSION_IDLE_SECS).run();
-  const r = await env.DB.prepare("SELECT admin,expires,last_active FROM sessions WHERE token=?").bind(th).first();
+  // The sweep, the session and its account, in one round trip.
+  const [, sr] = await env.DB.batch([
+    env.DB.prepare("DELETE FROM sessions WHERE expires <= ? OR last_active <= ?").bind(t, t - SESSION_IDLE_SECS),
+    env.DB.prepare("SELECT s.admin,s.expires,s.last_active,a.username account,a.disabled FROM sessions s LEFT JOIN admins a ON a.username=s.admin WHERE s.token=?").bind(th),
+  ]);
+  const r = (sr.results || [])[0];
   // Fail closed: a null/empty stored admin must NOT default to "master" (master login
   // sets identity="master" explicitly, so the master path is unaffected).
   if (!(r && r.expires > t && r.last_active > t - SESSION_IDLE_SECS && r.admin)) return null;
   // Revocation is authoritative: a named admin's session is valid only while their
   // account still exists and isn't disabled (master is env-based, always valid).
-  if (r.admin !== "master") {
-    const a = await env.DB.prepare("SELECT disabled FROM admins WHERE username=?").bind(r.admin).first();
-    if (!a || a.disabled) return null;
-  }
+  if (r.admin !== "master" && (!r.account || r.disabled)) return null;
   // Slide the inactivity window; at most one write a minute so the admin page's
   // 10s stats poll doesn't burn D1 writes.
   if (t - r.last_active >= 60) await env.DB.prepare("UPDATE sessions SET last_active=? WHERE token=?").bind(t, th).run();
@@ -1145,7 +1179,7 @@ async function handleAcceptInvite(request, env) {
   await logEvent(env, "admin_user_enrolled", null, null, null, `${a.username} enrolled`);
   return json({ ok: true, username: a.username }, 200, env);
 }
-async function handleAdminStats(request, env) {
+async function handleAdminStats(request, env, ctx) {
   const me = await sessionAdmin(request, env);
   if (!me) return json({ error: "admin auth required" }, 401, env);
   // ?all=builds / ?all=events / ?all=builds,events widens that table from the light
@@ -1154,46 +1188,68 @@ async function handleAdminStats(request, env) {
   // for authenticated admins, and only while expanded.
   const allOf = new Set(((new URL(request.url).searchParams.get("all")) || "").split(","));
   const bLimit = allOf.has("builds") ? 500 : 25, eLimit = allOf.has("events") ? 1000 : 60;
-  const cfg = await limits(env);
-  const counts = {};
-  for (const s of ["queued", "running", "done", "failed", "cancelled", "expired"])
-    counts[s] = await countQ(env, "SELECT count(*) c FROM builds WHERE state=?", s);
-  const avg = await env.DB.prepare("SELECT avg(finished_ts - dispatched_ts) a FROM builds WHERE (outcome='done' OR (outcome IS NULL AND state='done')) AND finished_ts IS NOT NULL AND dispatched_ts IS NOT NULL").first();
-  const builds = ((await env.DB.prepare("SELECT id,defconfig,ref,state,outcome,created_ts,dispatched_ts,finished_ts,run_id,cancel_requested,uid,ip_bucket,ip_full,country FROM builds ORDER BY created_ts DESC LIMIT ?").bind(bLimit).all()).results || []).map((b) => ({
+  // A login through another app's sign-in page belongs on that app's page, not here, so the
+  // ones this panel shows are its own. Filtered, not deleted: the row stays in the table and
+  // stays in the 7 day window, this is only which rows the panel draws. Written as "labelled
+  // as something else" rather than "labelled builder" on purpose, so rows from before the
+  // label existed, which have no app at all, keep showing here instead of vanishing.
+  const ownEvents = "NOT (kind LIKE 'admin_login%' AND app IS NOT NULL AND app <> 'builder')";
+  const t = nowSec();
+  // The whole panel in one round trip (it polls). The hourly usage window starts at the later
+  // of an hour ago and the last admin "reset limits", worked out in SQL so it fits in here.
+  const [sr, byState, aggR, buildsR, eventsR, privR] = await env.DB.batch([
+    settingsStmt(env, ["builds_enabled", "notice", "total_done", "limits", "branches", "tick_last_ok"]),
+    env.DB.prepare("SELECT state, count(*) c FROM builds GROUP BY state"),
+    env.DB.prepare(
+      `SELECT (${AVG_DONE_SQL}) avg,
+         (SELECT count(*) FROM builds WHERE created_ts > ?) last24h,
+         (SELECT count(*) FROM events WHERE ${ownEvents}) events_total,
+         (SELECT count(*) FROM builds WHERE created_ts > max(?, COALESCE((SELECT CAST(value AS INTEGER) FROM settings WHERE key='limits_reset_ts'), 0))
+            AND NOT (state='cancelled' AND dispatched_ts IS NULL)) hourly`
+    ).bind(t - DAY, t - WINDOW),
+    env.DB.prepare("SELECT id,defconfig,ref,state,outcome,created_ts,dispatched_ts,finished_ts,run_id,cancel_requested,uid,ip_bucket,ip_full,country FROM builds ORDER BY created_ts DESC LIMIT ?").bind(bLimit),
+    env.DB.prepare(`SELECT ts,kind,build_id,detail,uid,ip_bucket,ip_full,country FROM events WHERE ${ownEvents} ORDER BY id DESC LIMIT ?`).bind(eLimit),
+    env.DB.prepare("SELECT privileges FROM admins WHERE username=?").bind(me),
+  ]);
+  const s = settingsMap(sr), agg = (aggR.results || [])[0] || {};
+  ctx.waitUntil(maybeTick(env, s.tick_last_ok ?? null));
+  const cfg = limitsFrom(env, s.limits);
+  const counts = { queued: 0, running: 0, done: 0, failed: 0, cancelled: 0, expired: 0 };
+  for (const r of byState.results || []) if (r.state in counts) counts[r.state] = r.c;
+  // adminCan() without its read: the master holds everything, a named admin its granted set.
+  let privs = [];
+  try { privs = JSON.parse(((privR.results || [])[0] || {}).privileges || "[]"); } catch { privs = []; }
+  const can = (p) => me === "master" || (Array.isArray(privs) && privs.includes(p));
+  const builds = (buildsR.results || []).map((b) => ({
     build_id: b.id, defconfig: b.defconfig, ref: b.ref,
     state: b.state === "running" && b.cancel_requested ? "cancelling" : b.state,
     outcome: b.outcome,
     created_ts: b.created_ts, dispatched_ts: b.dispatched_ts, finished_ts: b.finished_ts, run_id: b.run_id, uid: b.uid,
     ip: b.ip_full || b.ip_bucket, ip_bucket: b.ip_bucket, country: b.country,
   }));
-  // A login through another app's sign-in page belongs on that app's page, not here, so the
-    // ones this panel shows are its own. Filtered, not deleted: the row stays in the table and
-    // stays in the 7 day window, this is only which rows the panel draws. Written as "labelled
-    // as something else" rather than "labelled builder" on purpose, so rows from before the
-    // label existed, which have no app at all, keep showing here instead of vanishing.
-    const events = ((await env.DB.prepare("SELECT ts,kind,build_id,detail,uid,ip_bucket,ip_full,country FROM events WHERE NOT (kind LIKE 'admin_login%' AND app IS NOT NULL AND app <> 'builder') ORDER BY id DESC LIMIT ?").bind(eLimit).all()).results || []).map((e) => ({
+  const events = (eventsR.results || []).map((e) => ({
     ts: e.ts, kind: e.kind, build_id: e.build_id, detail: e.detail, uid: e.uid,
     ip: e.ip_full || e.ip_bucket, ip_bucket: e.ip_bucket, country: e.country,
   }));
   return json({
-    builds_enabled: (await getSetting(env, "builds_enabled")) !== "0",
+    builds_enabled: s.builds_enabled !== "0",
     // With the expiry, unlike the public payload: the card shows when it clears itself.
-    notice: await getNotice(env),
+    notice: noticeFrom(s.notice),
     counts,
-    last24h: await countQ(env, "SELECT count(*) c FROM builds WHERE created_ts > ?", nowSec() - DAY),
+    last24h: agg.last24h || 0,
     // For the "showing latest N of M kept (7 days)" lines: the builds total is the sum of
     // the state counts client-side; events need their own count. 7 matches the cron prune.
-    events_total: await countQ(env, "SELECT count(*) c FROM events WHERE NOT (kind LIKE 'admin_login%' AND app IS NOT NULL AND app <> 'builder')"),
+    events_total: agg.events_total || 0,
     kept_days: 7,
-    total_done: parseInt((await getSetting(env, "total_done")) || "0", 10),
-    avg_build_secs: avg && avg.a ? Math.round(avg.a) : null,
+    total_done: parseInt(s.total_done || "0", 10),
+    avg_build_secs: agg.avg ? Math.round(agg.avg) : null,
     max_concurrent: cfg.maxConcurrent, retention_secs: cfg.retention,
     limits: { userHourly: cfg.userHourly, ipHourly: cfg.ipHourly, globalHourly: cfg.globalHourly, maxConcurrent: cfg.maxConcurrent, maxQueue: cfg.maxQueue, retention: cfg.retention },
     // What the branches card shows when collapsed. The repo's full branch list is a
     // separate call, made only when someone actually opens the card to edit it.
-    branches: await refConfig(env),
+    branches: refConfigFrom(s.branches),
     usage: {
-      globalHourly: await countQ(env, "SELECT count(*) c FROM builds WHERE created_ts > ? AND NOT (state='cancelled' AND dispatched_ts IS NULL)", Math.max(nowSec() - WINDOW, parseInt((await getSetting(env, "limits_reset_ts")) || "0", 10))),
+      globalHourly: agg.hourly || 0,
       maxConcurrent: counts.running, maxQueue: counts.queued,
     },
     recent_builds: builds, recent_events: events,
@@ -1203,8 +1259,8 @@ async function handleAdminStats(request, env) {
     // No self-update on the Worker: it deploys via git push, not a container swap, so the
     // admin version card is hidden and the version shows in the page footer instead.
     version: env.VERSION || "v0.1.0", latest_version: null, update_available: false, self_update: false,
-    me, master: me === "master", manage_users: await adminCan(env, me, "manage_users"),
-    edit_notice: await adminCan(env, me, "edit_notice"),
+    me, master: me === "master", manage_users: can("manage_users"),
+    edit_notice: can("edit_notice"),
   }, 200, env);
 }
 // Post or clear the single public notice banner. Empty text clears it, so the panel's
@@ -1372,19 +1428,19 @@ export default {
       if (!softGuard(gip, 90, 60)) return json({ error: "too many requests — slow down" }, 429, env);
     }
     // Fallback clock (see maybeTick), behind the flood guard so a request being turned
-    // away never reaches D1. Only the polling endpoints carry it, so it costs one settings
-    // read per poll while the cron is healthy, and it runs after the response, so no
-    // visitor waits on it. Anyone watching a build is polling one of these.
+    // away never reaches D1. Only the polling endpoints carry it, and it runs after the
+    // response, so no visitor waits on it. Anyone watching a build is polling one of these.
+    // Stats and admin stats start it themselves, off the timestamp their own read returns.
     // /api/health is in there so an uptime monitor doubles as an off-platform heartbeat:
     // the fallback clock only turns while someone is looking, and a pinger is someone
     // looking. Health used to sit outside the flood guard above; it is inside it now,
     // because it can reach D1 through this. 90/min per IP leaves any monitor untouched.
-    if (request.method === "GET" && (p === "/api/stats" || p === "/api/admin/stats" || p === "/api/health" || p.startsWith("/api/status/")))
+    if (request.method === "GET" && (p === "/api/health" || p.startsWith("/api/status/")))
       ctx.waitUntil(maybeTick(env));
     try {
       if (p === "/api/health") return new Response("ok", { headers: cors(env) });
       if (p === "/api/defconfigs" && request.method === "GET") return await handleDefconfigs(env, url.searchParams.get("ref"));
-      if (p === "/api/stats" && request.method === "GET") return await handleStats(request, env, url.searchParams.get("ref"), url.searchParams.get("my"));
+      if (p === "/api/stats" && request.method === "GET") return await handleStats(request, env, ctx, url.searchParams.get("ref"), url.searchParams.get("my"));
       if (p === "/api/build" && request.method === "POST") return await handleBuild(request, env);
       let m;
       if ((m = p.match(/^\/api\/status\/(.+)$/)) && request.method === "GET") return await handleStatus(m[1], env);
@@ -1392,7 +1448,7 @@ export default {
       if ((m = p.match(/^\/api\/admin\/cancel\/(.+)$/)) && request.method === "POST") return await handleAdminCancel(m[1], request, env);
       if ((m = p.match(/^\/api\/admin\/expire\/(.+)$/)) && request.method === "POST") return await handleAdminExpire(m[1], request, env);
       if (p === "/api/admin/login" && request.method === "POST") return await handleAdminLogin(request, env);
-      if (p === "/api/admin/stats" && request.method === "GET") return await handleAdminStats(request, env);
+      if (p === "/api/admin/stats" && request.method === "GET") return await handleAdminStats(request, env, ctx);
       if (p === "/api/admin/toggle" && request.method === "POST") return await handleAdminToggle(request, env);
       if (p === "/api/admin/notice" && request.method === "POST") return await handleAdminNotice(request, env);
       if (p === "/api/admin/clear-logs" && request.method === "POST") return await handleAdminClearLogs(request, env);
