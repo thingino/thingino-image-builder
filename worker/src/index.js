@@ -185,18 +185,26 @@ async function appJwt(env) {
   const sig = new Uint8Array(await crypto.subtle.sign("RSASSA-PKCS1-v1_5", await importRsaKey(env.GITHUB_APP_PRIVATE_KEY), new TextEncoder().encode(data)));
   return `${data}.${b64url(sig)}`;
 }
+// The ~1h token is cached in D1, shared by every isolate, and reused until 5 min before expiry.
+// The isolate keeps its own copy as well, so a tick or request that makes several GitHub calls
+// reads D1 for it once at most, rather than twice per call.
+let instToken = null;
 async function installationToken(env) {
-  // Worker is stateless → cache the ~1h token in D1; reuse until 5 min before expiry.
-  const cached = await getSetting(env, "gh_inst_token");
-  const exp = parseInt((await getSetting(env, "gh_inst_token_exp")) || "0", 10);
-  if (cached && exp - nowSec() > 300) return cached;
+  if (instToken && instToken.exp - nowSec() > 300) return instToken.token;
+  const s = await getSettings(env, ["gh_inst_token", "gh_inst_token_exp"]);
+  const exp = parseInt(s.gh_inst_token_exp || "0", 10);
+  if (s.gh_inst_token && exp - nowSec() > 300) {
+    instToken = { token: s.gh_inst_token, exp };
+    return instToken.token;
+  }
   const r = await fetch(`https://api.github.com/app/installations/${env.GITHUB_APP_INSTALLATION_ID}/access_tokens`, {
     method: "POST", headers: { ...ghHeaders(env, false), Authorization: `Bearer ${await appJwt(env)}` },
   });
   if (!r.ok) throw new Error(`installation token ${r.status}`);
   const j = await r.json();
-  await setSetting(env, "gh_inst_token", j.token);
-  await setSetting(env, "gh_inst_token_exp", String(Math.floor(new Date(j.expires_at).getTime() / 1000)));
+  const nexp = Math.floor(new Date(j.expires_at).getTime() / 1000);
+  await env.DB.batch([setStmt(env, "gh_inst_token", j.token), setStmt(env, "gh_inst_token_exp", String(nexp))]);
+  instToken = { token: j.token, exp: nexp };
   return j.token;
 }
 async function githubToken(env) {
