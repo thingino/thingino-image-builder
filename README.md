@@ -31,7 +31,12 @@ browser ──POST /api/build──▶ Rust broker ──repository_dispatch─�
   `<branch>@<hash>` commit badge track the choice. Which branches are on offer is an
   admin setting (the *Buildable branches* card picks them from the firmware repo's
   real branch list), so the page reads them from the API rather than hardcoding them.
-- **Share links**: `?board=<defconfig>&branch=<ref>` opens the page with that
+- **Build options**: optional extras as checkboxes in **Settings** (off by default,
+  saved like the branch), from a server-side **allowlist** (`GET /api/build-options`),
+  not free-form config. Currently **NetConsole** (`BR2_PACKAGE_THINGINO_UBOOT_NETCONSOLE=y`),
+  written to thingino's `user/common/local.fragment`; a board that can't honor it drops
+  it in Kconfig. Options are part of the dedup key.
+- **Share links**: `?board=<defconfig>&branch=<ref>[&opts=<ids>]` opens the page with that
   camera and branch already selected (never auto-building), and the **Copy link**
   button produces one from the current selection. A camera that isn't on the
   linked branch says so and offers a one-click switch to a branch that has it.

@@ -3,6 +3,7 @@
 -- Migrating a pre-ref DB: ALTER TABLE builds ADD COLUMN ref TEXT;
 -- Migrating a pre-country DB: ALTER TABLE builds ADD COLUMN country TEXT;
 --                             ALTER TABLE events ADD COLUMN country TEXT;
+-- Migrating a pre-options DB: ALTER TABLE builds ADD COLUMN options TEXT NOT NULL DEFAULT '';
 CREATE TABLE IF NOT EXISTS builds (
   id TEXT PRIMARY KEY,
   uid TEXT NOT NULL,
@@ -11,6 +12,7 @@ CREATE TABLE IF NOT EXISTS builds (
   country TEXT,  -- request origin (ISO 3166-1 alpha-2) from Cloudflare's edge geo, for abuse triage
   defconfig TEXT NOT NULL,
   ref TEXT,  -- thingino branch the build was requested from (master/ciao/stable; NULL = predates the column)
+  options TEXT NOT NULL DEFAULT '',  -- canonical extra-option ids (sorted, comma-joined; '' = none)
   state TEXT NOT NULL,
   run_id INTEGER,
   attempts INTEGER NOT NULL DEFAULT 0,
